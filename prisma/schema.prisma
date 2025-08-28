@@ -70,6 +70,39 @@ enum VehicleStatus {
   INACTIVE      // Inactive
 }
 
+// Types de notifications
+enum NotificationType {
+  RIDE_REQUEST        // Nouvelle demande de course
+  RIDE_ACCEPTED       // Course acceptée
+  RIDE_STARTED        // Course commencée
+  RIDE_COMPLETED      // Course terminée
+  RIDE_CANCELED       // Course annulée
+  RESERVATION_REMINDER // Rappel réservation
+  DOCUMENT_EXPIRED     // Document expiré
+  DOCUMENT_APPROVED    // Document approuvé
+  DOCUMENT_REJECTED    // Document rejeté
+  PAYMENT_SUCCESS      // Paiement réussi
+  PAYMENT_FAILED       // Paiement échoué
+  DRIVER_APPROVED      // Chauffeur approuvé
+  SYSTEM_MAINTENANCE   // Maintenance système
+}
+
+// Canaux de notification
+enum NotificationChannel {
+  PUSH      // Notification push
+  EMAIL     // Email
+  SMS       // SMS
+  IN_APP    // Notification in-app
+}
+
+// Statut de notification
+enum NotificationStatus {
+  PENDING   // En attente d'envoi
+  SENT      // Envoyée avec succès
+  FAILED    // Échec d'envoi
+  READ      // Lue par l'utilisateur
+}
+
 // =====================================================
 // MODÈLES PRINCIPAUX
 // =====================================================
@@ -101,6 +134,10 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   
+
+  // notifications
+  notifications Notification[]
+  preferences   NotificationPreference[]
   // Index pour performance
   @@index([role])
   @@index([isActive])
@@ -446,4 +483,117 @@ model ReservationPayment {
   @@index([paymentId])
   
   @@map("reservation_payments")
+}
+
+
+
+// notification
+
+
+// Templates de notification
+model NotificationTemplate {
+  id          String             @id @default(cuid())
+  type        NotificationType   // Type de notification
+  channel     NotificationChannel // Canal (push, email, sms)
+  
+  // Contenu du template
+  title       String            // Titre (pour push/in-app)
+  body        String            // Corps du message
+  subject     String?           // Sujet (pour email)
+  
+  // Template avec variables dynamiques
+  // Ex: "Votre course vers {{destination}} a été acceptée par {{driverName}}"
+  variables   Json?             // Variables disponibles
+  
+  // Langues supportées
+  language    String @default("fr") // fr, en, etc.
+  
+  // Configuration
+  active      Boolean @default(true)
+  priority    Int     @default(1)   // 1=haute, 2=moyenne, 3=basse
+  
+  // Relations
+  notifications Notification[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([type, channel, language]) // Un template par type/canal/langue
+  @@index([type])
+  @@index([active])
+  
+  @@map("notification_templates")
+}
+
+// Notifications envoyées
+model Notification {
+  id         String              @id @default(cuid())
+  templateId String
+  template   NotificationTemplate @relation(fields: [templateId], references: [id])
+  
+  // Destinataire
+  userId     String
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Contenu final (après remplacement des variables)
+  title      String
+  body       String
+  subject    String?
+  
+  // Métadonnées
+  type       NotificationType
+  channel    NotificationChannel
+  status     NotificationStatus   @default(PENDING)
+  priority   Int                 @default(1)
+  
+  // Données contextuelles (ride_id, document_id, etc.)
+  metadata   Json?               
+  
+  // Tracking
+  sentAt     DateTime?           // Quand envoyée
+  readAt     DateTime?           // Quand lue (in-app)
+  errorMsg   String?             // Message d'erreur si échec
+  
+  // Pour les retry
+  attempts   Int      @default(0)
+  maxAttempts Int     @default(3)
+  nextRetry  DateTime?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([userId, status])
+  @@index([type])
+  @@index([status, nextRetry]) // Pour les retry
+  @@index([createdAt])
+  
+  @@map("notifications")
+}
+
+// Configuration utilisateur pour notifications
+model NotificationPreference {
+  id      String @id @default(cuid())
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Préférences par type
+  type    NotificationType
+  
+  // Canaux activés pour ce type
+  pushEnabled   Boolean @default(true)
+  emailEnabled  Boolean @default(true)
+  smsEnabled    Boolean @default(false)
+  inAppEnabled  Boolean @default(true)
+  
+  // Horaires (format JSON)
+  // Ex: {"start": "08:00", "end": "22:00", "timezone": "Africa/Abidjan"}
+  schedule      Json?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([userId, type])
+  @@index([userId])
+  
+  @@map("notification_preferences")
 }

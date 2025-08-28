@@ -12,20 +12,26 @@ import { join } from 'path';
 import { ConfigModule } from '@nestjs/config';
 import { RidesModule } from './modules/rides/rides.module';
 import { ReservationsModule } from './modules/reservation/reservation.module';
-import { RatingsService } from './ratings/ratings.service';
-import { RatingsModule } from './ratings/ratings.module';
-
-
+import { PaymentsModule } from './modules/payments/payments.module';
+import { ScheduleModule } from '@nestjs/schedule';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { NotificationsModule } from './modules/notifications/notifications.module';
+import { LocationsController } from './locations/locations.controller';
+import { LocationsService } from './locations/locations.service';
+import { LocationsModule } from './locations/locations.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true
     }),
+    ScheduleModule.forRoot(),
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'uploads'),
       serveRoot: '/uploads/',
     }),
+    EventEmitterModule.forRoot(),
+    
     PrismaModule,
     UsersModule,
     AuthModule,
@@ -34,11 +40,13 @@ import { RatingsModule } from './ratings/ratings.module';
     DocumentsModule,
     RidesModule,
     ReservationsModule,
-    RatingsModule,
+    PaymentsModule,
+    NotificationsModule,
+    LocationsModule,
     
   ],
-  controllers: [AppController],
-  providers: [AppService, RatingsService],
+  controllers: [AppController, LocationsController],
+  providers: [AppService, LocationsService],
    
 })
 export class AppModule {}

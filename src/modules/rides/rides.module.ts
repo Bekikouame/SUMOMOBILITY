@@ -7,9 +7,10 @@ import { Module } from '@nestjs/common';
 import { RidesController } from './rides.controller';
 import { RidesService } from './rides.service';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, NotificationsModule],
   controllers: [RidesController],
   providers: [RidesService],
   exports: [RidesService],

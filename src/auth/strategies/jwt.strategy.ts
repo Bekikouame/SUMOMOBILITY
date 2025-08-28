@@ -40,6 +40,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
     
     // L'objet retourné sera attaché à req.user
-    return { sub: user.id, email: user.email, role: user.role };
+    return { id: user.id, email: user.email, role: user.role };
   }
 }
