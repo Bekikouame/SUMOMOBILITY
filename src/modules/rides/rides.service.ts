@@ -29,76 +29,86 @@ export class RidesService {
   // ===============================
   // CRÉATION DE COURSE
   // ===============================
-  async createRide(userId: string, createRideDto: CreateRideDto) {
-    this.logger.log(`Creating ride for user ${userId}`);
+// Méthode createRide corrigée
+async createRide(userId: string, createRideDto: CreateRideDto) {
+  this.logger.log(`Creating ride for user ${userId}`);
 
-    // Vérifier que l'utilisateur est CLIENT
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: { clientProfile: true }
-    });
-
-    if (!user || user.role !== UserRole.CLIENT || !user.clientProfile) {
-      throw new BadRequestException('Only clients can request rides');
-    }
-
-    // Calculer distance et tarif estimé
-    const distance = this.calculateDistance(
-      createRideDto.pickupLatitude,
-      createRideDto.pickupLongitude,
-      createRideDto.destinationLatitude,
-      createRideDto.destinationLongitude
-    );
-
-    const estimatedFare = this.calculateFare(distance, createRideDto.rideType || 'STANDARD');
-
-    // Créer la course
-    const ride = await this.prisma.ride.create({
-      data: {
-        clientId: user.clientProfile.id,
-        rideType: createRideDto.rideType || 'STANDARD',
-        pickupAddress: createRideDto.pickupAddress,
-        destinationAddress: createRideDto.destinationAddress,
-        pickupLatitude: createRideDto.pickupLatitude,
-        pickupLongitude: createRideDto.pickupLongitude,
-        destinationLatitude: createRideDto.destinationLatitude,
-        destinationLongitude: createRideDto.destinationLongitude,
-        passengerCount: createRideDto.passengerCount || 1,
-        notes: createRideDto.notes,
-        status: RideStatus.REQUESTED,
-        requestedAt: new Date(),
-        baseFare: estimatedFare,
-        totalFare: estimatedFare,
-      },
-      include: {
-        client: {
-          include: { user: { select: { firstName: true, lastName: true, phone: true } } }
-        }
-      }
-    });
-
-    // Notifier la création de course au client
-    await this.notificationsService.sendNotification({
-      type: NotificationType.RIDE_REQUEST,
-      userId: userId,
-      variables: {
-        message: `Demande de course créée avec succès`,
-        rideId: ride.id,
-        pickup: ride.pickupAddress,
-        destination: ride.destinationAddress,
-        estimatedFare: `${estimatedFare} FCFA`,
-        details: `Votre course de ${ride.pickupAddress} vers ${ride.destinationAddress} a été enregistrée`
-      },
-      metadata: { rideId: ride.id }
-    });
-
-    // Lancer la recherche de chauffeurs disponibles
-    this.findAvailableDrivers(ride.id).catch(error => {
-      this.logger.error(`Error finding drivers for ride ${ride.id}:`, error);
-    });
-
-    return ride;
+  // Validation de l'ID utilisateur
+  if (!userId) {
+    throw new BadRequestException('L\'ID utilisateur est requis');
   }
+
+  // Vérifier que l'utilisateur est CLIENT (une seule fois)
+  const user = await this.prisma.user.findUnique({
+    where: { id: userId },
+    include: { clientProfile: true }
+  });
+
+  if (!user) {
+    throw new NotFoundException('Utilisateur non trouvé');
+  }
+
+  if (user.role !== UserRole.CLIENT || !user.clientProfile) {
+    throw new BadRequestException('Seuls les clients peuvent demander une course');
+  }
+
+  // Calculer distance et tarif estimé
+  const distance = this.calculateDistance(
+    createRideDto.pickupLatitude,
+    createRideDto.pickupLongitude,
+    createRideDto.destinationLatitude,
+    createRideDto.destinationLongitude
+  );
+
+  const estimatedFare = this.calculateFare(distance, createRideDto.rideType || 'STANDARD');
+
+  // Créer la course
+  const ride = await this.prisma.ride.create({
+    data: {
+      clientId: user.clientProfile.id,
+      rideType: createRideDto.rideType || 'STANDARD',
+      pickupAddress: createRideDto.pickupAddress,
+      destinationAddress: createRideDto.destinationAddress,
+      pickupLatitude: createRideDto.pickupLatitude,
+      pickupLongitude: createRideDto.pickupLongitude,
+      destinationLatitude: createRideDto.destinationLatitude,
+      destinationLongitude: createRideDto.destinationLongitude,
+      passengerCount: createRideDto.passengerCount || 1,
+      notes: createRideDto.notes,
+      status: RideStatus.REQUESTED,
+      requestedAt: new Date(),
+      baseFare: estimatedFare,
+      totalFare: estimatedFare,
+    },
+    include: {
+      client: {
+        include: { user: { select: { firstName: true, lastName: true, phone: true } } }
+      }
+    }
+  });
+
+  // Notifier la création de course au client
+  await this.notificationsService.sendNotification({
+    type: NotificationType.RIDE_REQUEST,
+    userId: userId,
+    variables: {
+      message: `Demande de course créée avec succès`,
+      rideId: ride.id,
+      pickup: ride.pickupAddress,
+      destination: ride.destinationAddress,
+      estimatedFare: `${estimatedFare} FCFA`,
+      details: `Votre course de ${ride.pickupAddress} vers ${ride.destinationAddress} a été enregistrée`
+    },
+    metadata: { rideId: ride.id }
+  });
+
+  // Lancer la recherche de chauffeurs disponibles
+  this.findAvailableDrivers(ride.id).catch(error => {
+    this.logger.error(`Error finding drivers for ride ${ride.id}:`, error);
+  });
+
+  return ride;
+}
 
   // ===============================
   // RECHERCHE CHAUFFEURS DISPONIBLES
@@ -212,7 +222,7 @@ export class RidesService {
     // Vérification explicite pour éviter l'erreur TypeScript
     const driverProfile = user.driverProfile;
     if (driverProfile.status !== DriverStatus.APPROVED) {
-      throw new ForbiddenException('Driver must be approved to accept rides');
+       throw new ForbiddenException('Driver must be approved to accept rides');
     }
 
     const availableVehicle = driverProfile.vehicles[0];

@@ -1,13 +1,17 @@
 // src/payments/dto/create-payment.dto.ts
-import { IsEnum, IsDecimal, IsString, IsOptional, IsUUID, Min } from 'class-validator';
+import { IsEnum, IsDecimal, IsString, IsOptional, IsUUID, Min, IsNumber } from 'class-validator';
 import { PaymentMethod, PaymentStatus } from '@prisma/client';
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 
 export class CreatePaymentDto {
-  @ApiProperty({ example: '25000.50', description: 'Montant du paiement' })
-  @IsDecimal({ decimal_digits: '0,2' })
-  @Transform(({ value }) => parseFloat(value))
+  // @ApiProperty({ example: '25000.50', description: 'Montant du paiement' })
+  // @IsDecimal({ decimal_digits: '0,2' })
+  // @Transform(({ value }) => parseFloat(value))
+  // @Min(0)
+  // amount: number;
+   @ApiProperty({ example: 25000.5, description: 'Montant du paiement' })
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'amount doit être un nombre avec max 2 décimales' })
   @Min(0)
   amount: number;
 
@@ -21,12 +25,12 @@ export class CreatePaymentDto {
   method: PaymentMethod;
 
   @ApiProperty({ example: 'course-123', description: 'ID de la course (optionnel)', required: false })
-  @IsUUID()
+  @IsString()
   @IsOptional()
   rideId?: string;
 
   @ApiProperty({ example: 'reservation-456', description: 'ID de la réservation (optionnel)', required: false })
-  @IsUUID()
+  @IsString()
   @IsOptional()
   reservationId?: string;
 

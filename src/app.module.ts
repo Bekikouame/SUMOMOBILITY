@@ -16,9 +16,9 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { NotificationsModule } from './modules/notifications/notifications.module';
-import { LocationsController } from './locations/locations.controller';
-import { LocationsService } from './locations/locations.service';
-import { LocationsModule } from './locations/locations.module';
+import { LocationsModule } from './modules/locations/locations.module';
+import { AdminModule } from './modules/admin/admin.module';
+import { RideTrackingModule } from './modules/rides/tracking/ride-tracking.module';
 
 @Module({
   imports: [
@@ -43,10 +43,11 @@ import { LocationsModule } from './locations/locations.module';
     PaymentsModule,
     NotificationsModule,
     LocationsModule,
+    AdminModule,
+    RideTrackingModule
     
   ],
-  controllers: [AppController, LocationsController],
-  providers: [AppService, LocationsService],
+  
    
 })
 export class AppModule {}

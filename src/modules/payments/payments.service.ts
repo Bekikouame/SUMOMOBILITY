@@ -11,7 +11,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 export class PaymentsService {
   constructor(private prisma: PrismaService) {}
 
-  // ✅ MÉTHODES WEBHOOK - Nécessaires pour PaymentWebhooksController
+  // MÉTHODES WEBHOOK - Nécessaires pour PaymentWebhooksController
   
   // Trouve un paiement par son transaction ID
   async findByTransactionId(transactionId: string) {
@@ -97,7 +97,7 @@ export class PaymentsService {
     });
   }
 
-  // ✅ MÉTHODES PRIVÉES POUR GÉRER LES SUCCÈS/ÉCHECS
+  // MÉTHODES PRIVÉES POUR GÉRER LES SUCCÈS/ÉCHECS
 
   private async handleRidePaymentSuccess(paymentId: string, tx: any) {
     const ridePayment = await tx.ridePayment.findFirst({
@@ -106,7 +106,7 @@ export class PaymentsService {
     });
 
     if (ridePayment && ridePayment.ride.status === RideStatus.COMPLETED) {
-      // Marquer la course comme payée (vous pouvez ajouter un champ isPaid dans votre schéma)
+      // Marquer la course comme payée (ajouter un champ isPaid dans votre schéma)
       await tx.ride.update({
         where: { id: ridePayment.rideId },
         data: {
@@ -115,7 +115,7 @@ export class PaymentsService {
       });
 
       // TODO: Notifier le chauffeur que le paiement est confirmé
-      console.log(`✅ Paiement confirmé pour la course ${ridePayment.rideId}`);
+      console.log(`Paiement confirmé pour la course ${ridePayment.rideId}`);
     }
   }
 
@@ -135,7 +135,7 @@ export class PaymentsService {
         },
       });
 
-      console.log(`✅ Réservation confirmée ${reservationPayment.reservationId}`);
+      console.log(`Réservation confirmée ${reservationPayment.reservationId}`);
     }
   }
 
@@ -175,10 +175,10 @@ export class PaymentsService {
       });
     }
 
-    console.log(`❌ Paiement échoué, entités annulées pour le paiement ${paymentId}`);
+    console.log(`Paiement échoué, entités annulées pour le paiement ${paymentId}`);
   }
 
-  // ✅ MÉTHODES EXISTANTES CORRIGÉES
+  //  MÉTHODES EXISTANTES CORRIGÉES
 
   // Créer un nouveau paiement
   async createPayment(createPaymentDto: CreatePaymentDto) {
@@ -348,7 +348,7 @@ export class PaymentsService {
     };
   }
 
-  // ✅ CORRECTION - Paiements d'une course spécifique
+  // CORRECTION - Paiements d'une course spécifique
   async findRidePayments(rideId: string) {
     // Récupérer les paiements via la table de liaison RidePayment
     const ridePayments = await this.prisma.ridePayment.findMany({
@@ -373,7 +373,7 @@ export class PaymentsService {
     }));
   }
 
-  // ✅ CORRECTION - Gains d'un chauffeur
+  // CORRECTION - Gains d'un chauffeur
   async getDriverEarnings(driverId: string, startDate?: string, endDate?: string) {
     // Vérifier que le chauffeur existe
     const driver = await this.prisma.driverProfile.findUnique({
@@ -396,7 +396,7 @@ export class PaymentsService {
       if (endDate) where.completedAt.lte = new Date(endDate);
     }
 
-    // ✅ CORRECTION PRINCIPALE - Utiliser la bonne structure de relation
+    //  CORRECTION PRINCIPALE - Utiliser la bonne structure de relation
     const rides = await this.prisma.ride.findMany({
       where,
       include: {

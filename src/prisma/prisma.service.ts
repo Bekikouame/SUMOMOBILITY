@@ -43,12 +43,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       'clientProfile',
       'user',
       'cancellationCause',
+      
     ];
 
     for (const model of models) {
       await this[model].deleteMany({});
     }
 
-    console.log('🧹 Base de données nettoyée');
+    console.log(' Base de données nettoyée');
   }
 }

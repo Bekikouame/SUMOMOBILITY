@@ -98,12 +98,12 @@ export class NotificationFiltersDto {
   @ApiProperty({ minimum: 1, maximum: 100, required: false, default: 20 })
   @IsOptional()
   @IsNumber()
-  @Transform(({ value }) => (typeof value === 'string' ? parseInt(value) : value)) // ✅ sécurité ajoutée
+  @Transform(({ value }) => (typeof value === 'string' ? parseInt(value) : value)) //  sécurité ajoutée
   limit?: number = 20;
 
   @ApiProperty({ minimum: 0, required: false, default: 0 })
   @IsOptional()
   @IsNumber()
-  @Transform(({ value }) => (typeof value === 'string' ? parseInt(value) : value)) // ✅ sécurité ajoutée
+  @Transform(({ value }) => (typeof value === 'string' ? parseInt(value) : value)) // sécurité ajoutée
   offset?: number = 0;
 }

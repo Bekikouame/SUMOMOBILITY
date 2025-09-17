@@ -4,8 +4,8 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
-@ApiTags('users') // 👈 Groupe "Users" dans Swagger
-@ApiBearerAuth()  // 👈 Active l’auth JWT
+@ApiTags('users') //  Groupe "Users" dans Swagger
+@ApiBearerAuth()  // Active l’auth JWT
 @Controller('users')
 @UseGuards(JwtAuthGuard)
 export class UsersController {

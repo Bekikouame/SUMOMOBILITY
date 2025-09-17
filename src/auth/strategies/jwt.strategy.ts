@@ -5,12 +5,14 @@ import { ConfigService } from '@nestjs/config';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { AuthService } from '../auth.service';
 import { JwtPayload } from '../interfaces/auth.interface';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     private authService: AuthService,
     private configService: ConfigService,
+    private prisma: PrismaService
   ) {
     // Obtenir la clé secrète et vérifier si elle est définie
     const jwtSecret = configService.get<string>('JWT_SECRET');
@@ -31,15 +33,33 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
    * Validation du payload JWT
    * Cette méthode est appelée automatiquement après la vérification du token
    */
-  async validate(payload: JwtPayload) {
-    // Valider que l'utilisateur existe toujours et est actif
-    const user = await this.authService.validateUser(payload);
-    
-    if (!user) {
-      throw new UnauthorizedException('Token invalide ou utilisateur introuvable');
-    }
-    
-    // L'objet retourné sera attaché à req.user
-    return { id: user.id, email: user.email, role: user.role };
+ // auth/strategies/jwt.strategy.ts
+async validate(payload: any) {
+  console.log('JWT Strategy - payload reçu:', payload);
+  
+  // Le payload JWT contient généralement { sub: userId, ... }
+  const userId = payload.sub || payload.id || payload.userId;
+  
+  if (!userId) {
+    throw new UnauthorizedException('Token JWT invalide - pas d\'ID utilisateur');
   }
+
+  // Vérifier que l'utilisateur existe
+  const user = await this.prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, role: true, isActive: true }
+  });
+
+  if (!user || !user.isActive) {
+    throw new UnauthorizedException('Utilisateur non trouvé ou inactif');
+  }
+
+  // IMPORTANT : Ce qui est retourné ici devient req.user
+  return {
+    id: user.id,     // <- ou 'sub: user.id' selon votre préférence
+    sub: user.id,    // <- si vous voulez garder 'sub'
+    email: user.email,
+    role: user.role
+  };
+}
 }

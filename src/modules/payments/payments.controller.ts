@@ -23,31 +23,33 @@ import { PaymentsService } from './payments.service';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
-import { UserRole, PaymentMethod, PaymentStatus } from '@prisma/client'; // ✅ Import PaymentMethod et PaymentStatus
+import { UserRole, PaymentMethod, PaymentStatus } from '@prisma/client'; //  Import PaymentMethod et PaymentStatus
 import { PrismaService } from '../../prisma/prisma.service';
-
+import { CreatePaymentDto } from './dto/create-payment.dto';
+import { PaymentFilterDto } from './dto/payment-filter.dto';
+import { RefundPaymentDto } from './dto/refund-payment.dto';
 // DTOs corrigés
-export class CreatePaymentDto {
-  amount: number;
-  method: PaymentMethod; // ✅ Utiliser PaymentMethod au lieu de string
-  rideId?: string;
-  reservationId?: string;
-  metadata?: Record<string, any>;
-}
+// export class CreatePaymentDto {
+//   amount: number;
+//   method: PaymentMethod; //  Utiliser PaymentMethod au lieu de string
+//   rideId?: string;
+//   reservationId?: string;
+//   metadata?: Record<string, any>;
+// }
 
-export class PaymentFilterDto {
-  status?: PaymentStatus; // ✅ Utiliser PaymentStatus au lieu de string
-  method?: PaymentMethod; // ✅ Utiliser PaymentMethod au lieu de string
-  startDate?: string;
-  endDate?: string;
-  limit?: number;
-  offset?: number;
-}
+// export class PaymentFilterDto {
+//   status?: PaymentStatus; //  Utiliser PaymentStatus au lieu de string
+//   method?: PaymentMethod; //  Utiliser PaymentMethod au lieu de string
+//   startDate?: string;
+//   endDate?: string;
+//   limit?: number;
+//   offset?: number;
+// }
 
-export class RefundPaymentDto {
-  amount?: number;
-  reason: string;
-}
+// export class RefundPaymentDto {
+//   amount?: number;
+//   reason: string;
+// }
 
 @ApiTags('Paiements')
 @ApiBearerAuth()
@@ -98,7 +100,7 @@ export class PaymentsController {
   @ApiQuery({ name: 'endDate', required: false, description: 'Date de fin (ISO)' })
   async getDriverEarnings(
     @Param('driverId') driverId: string,
-    @Request() req: any, // ✅ Déplacer req avant les paramètres optionnels
+    @Request() req: any, // Déplacer req avant les paramètres optionnels
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
@@ -148,7 +150,7 @@ export class PaymentsController {
   async refundPayment(
     @Param('id') id: string,
     @Body() refundDto: RefundPaymentDto,
-    @Request() req: any, // ✅ req est maintenant en dernier (paramètre requis)
+    @Request() req: any, //  req est maintenant en dernier (paramètre requis)
   ) {
     return this.paymentsService.refundPayment(id, refundDto, req.user.sub);
   }

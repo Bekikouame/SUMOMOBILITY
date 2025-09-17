@@ -17,7 +17,6 @@ export class ProfilesService {
     // Vérifier que l'utilisateur existe et a le bon rôle
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: { clientProfile: true },
     });
 
     if (!user) {
@@ -28,7 +27,12 @@ export class ProfilesService {
       throw new BadRequestException('Seuls les clients peuvent créer un profil client');
     }
 
-    if (user.clientProfile) {
+    // Vérification directe au lieu de la relation
+    const existingClientProfile = await this.prisma.clientProfile.findUnique({
+      where: { userId: userId }
+    });
+
+    if (existingClientProfile) {
       throw new BadRequestException('Le profil client existe déjà');
     }
 
@@ -115,20 +119,26 @@ export class ProfilesService {
   // ==================== DRIVER PROFILES ====================
 
   async createDriverProfile(userId: string, dto: CreateDriverProfileDto) {
+    console.log('=== DEBUG CRÉATION PROFIL ===');
+    console.log('userId:', userId);
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: { driverProfile: true },
     });
-
+        console.log('Utilisateur trouvé:', !!user, user?.role);
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
-
+    console.log('Recherche profil existant...');
     if (user.role !== UserRole.DRIVER) {
       throw new BadRequestException('Seuls les chauffeurs peuvent créer un profil chauffeur');
     }
 
-    if (user.driverProfile) {
+    // Vérification directe au lieu de la relation
+    const existingDriverProfile = await this.prisma.driverProfile.findUnique({
+      where: { userId: userId }
+    });
+
+    if (existingDriverProfile) {
       throw new BadRequestException('Le profil chauffeur existe déjà');
     }
 

@@ -20,7 +20,7 @@ export class EmailService {
     try {
       // TODO: Intégrer avec SendGrid, Mailgun, ou AWS SES
       
-      this.logger.log(`📧 EMAIL vers ${userEmail}: ${subject}`);
+      this.logger.log(` EMAIL vers ${userEmail}: ${subject}`);
       this.logger.debug(`Corps: ${body.substring(0, 100)}...`);
 
       // Simuler délai réseau

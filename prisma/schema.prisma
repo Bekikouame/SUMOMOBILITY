@@ -117,7 +117,11 @@ model User {
   passwordHash String
   role         UserRole @default(CLIENT)
   isActive     Boolean  @default(true)
-  
+
+
+  adminLogs AdminLog[]
+  reports   Report[]
+  passwordResetCodes PasswordResetCode[]
   // Géolocalisation pour partitioning
   country      String?
   city         String?
@@ -179,6 +183,7 @@ model DriverProfile {
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   status       DriverStatus @default(PENDING)
   licenseNumber String?      @unique
+  driverLocation DriverLocation?
   
   // Informations métier
   driverType    String?      // VTC, Taxi, etc.
@@ -377,6 +382,7 @@ model Ride {
   // Relations
   ratings  Rating[]
   payments RidePayment[]
+  trackingPoints RideTrackingPoint[]
   
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -392,6 +398,34 @@ model Ride {
   
   @@map("rides")
 }
+
+
+// Points de suivi GPS pour une course (historique de localisation)
+model RideTrackingPoint {
+  id        String   @id @default(cuid())
+  rideId    String
+  ride      Ride     @relation(fields: [rideId], references: [id], onDelete: Cascade)
+  
+  // Position GPS
+  latitude  Float
+  longitude Float
+  
+  // Métadonnées de mouvement
+  speed     Float?   // Vitesse en km/h
+  heading   Float?   // Direction en degrés (0-360)
+  accuracy  Float?   // Précision GPS en mètres
+  
+  // Données contextuelles
+  timestamp DateTime @default(now())
+  altitude  Float?   // Altitude (optionnel)
+  
+  // Index pour performance
+  @@index([rideId, timestamp])
+  @@index([timestamp]) // Pour le nettoyage des données anciennes
+  
+  @@map("ride_tracking_points")
+}
+
 
 // Évaluations des courses
 model Rating {
@@ -596,4 +630,167 @@ model NotificationPreference {
   @@index([userId])
   
   @@map("notification_preferences")
+}
+
+
+
+// Ajouter ces modèles après vos modèles existants
+
+model ServiceZone {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  country     String
+  city        String
+  geometry    Json
+  baseFare       Decimal @db.Decimal(8,2)
+  perKmRate      Decimal @db.Decimal(6,2) 
+  perMinuteRate  Decimal @db.Decimal(6,2)
+  isActive       Boolean @default(true)
+  maxRadius      Int     @default(50)
+  operatingHours Json?
+  
+  driverLocations DriverLocation[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([isActive])
+  @@index([country, city])
+  @@map("service_zones")
+}
+
+model PointOfInterest {
+  id          String @id @default(cuid())
+  name        String
+  category    String
+  address     String?
+  description String?
+  country     String
+  city        String
+  latitude    Float
+  longitude   Float
+  phone       String?
+  website     String?
+  rating      Float?
+  isPopular   Boolean @default(false)
+  isActive    Boolean @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([category, isActive])
+  @@index([latitude, longitude])
+  @@index([isPopular])
+  @@index([country, city])
+  @@map("points_of_interest")
+}
+
+model DriverLocation {
+  id          String        @id @default(cuid())
+  driverId    String        @unique
+  driver      DriverProfile @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  
+  latitude    Float
+  longitude   Float
+  heading     Float?
+  speed       Float?
+  accuracy    Float?
+  isOnline    Boolean       @default(false)
+  isAvailable Boolean       @default(false)
+  
+  serviceZoneId String?
+  currentZone   ServiceZone? @relation(fields: [serviceZoneId], references: [id])
+  
+  lastPing    DateTime      @default(now())
+  batteryLevel Float?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([latitude, longitude, isOnline, isAvailable])
+  @@index([lastPing])
+  @@index([serviceZoneId])
+  @@map("driver_locations")
+}
+
+// pour administration 
+model SystemConfig {
+  id          String @id @default(cuid())
+  key         String @unique
+  value       Json
+  description String?
+  category    String
+  isPublic    Boolean @default(false)
+  updatedBy   String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([category])
+  @@index([isPublic])
+  @@map("system_configs")
+}
+
+model AdminLog {
+  id        String @id @default(cuid())
+  adminId   String
+  admin     User   @relation(fields: [adminId], references: [id])
+  
+  action    String
+  resource  String
+  resourceId String?
+  oldValues Json?
+  newValues Json?
+  ipAddress String?
+  userAgent String?
+  
+  createdAt DateTime @default(now())
+  
+  @@index([adminId])
+  @@index([action])
+  @@index([resource])
+  @@index([createdAt])
+  @@map("admin_logs")
+}
+
+model Report {
+  id          String @id @default(cuid())
+  title       String
+  type        String
+  filters     Json?
+  dateFrom    DateTime?
+  dateTo      DateTime?
+  data        Json
+  fileUrl     String?
+  generatedBy String
+  generator   User   @relation(fields: [generatedBy], references: [id])
+  
+  createdAt DateTime @default(now())
+  
+  @@index([type])
+  @@index([generatedBy])
+  @@index([createdAt])
+  @@map("reports")
+}
+
+
+// reunitalisation de mdp
+
+model PasswordResetCode {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  code      String
+  email     String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  attempts  Int      @default(0)
+  
+  createdAt DateTime @default(now())
+  
+  @@index([code])
+  @@index([email])
+  @@map("password_reset_codes")
 }

@@ -10,6 +10,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   ConflictException,
+  Req,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import {  RefreshTokenDto } from './dto/refresh-token.dto';
@@ -30,6 +31,7 @@ import {
   ApiConflictResponse,
   ApiUnauthorizedResponse
 } from '@nestjs/swagger';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -298,7 +300,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
     summary: 'Demande de réinitialisation de mot de passe',
-    description: 'Envoie un code de réinitialisation par email (à implémenter plus tard avec service email).'
+    description: 'Envoie un code de réinitialisation par email.'
   })
   @ApiResponse({ 
     status: 200, 
@@ -310,13 +312,54 @@ export class AuthController {
       }
     }
   })
-  async forgotPassword(@Body('email') email: string) {
-    //  la logique de réinitialisation
-    return {
-      success: true,
-      message: 'Un code de réinitialisation a été envoyé à votre email'
-    };
+  @ApiBadRequestResponse({ 
+  description: 'Email invalide',
+  schema: {
+    example: {
+      success: false,
+      message: 'Format d\'email invalide'
+    }
   }
+})
+  async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: any) {
+  return this.authService.forgotPassword(dto, req);
+}
+
+
+@Public()
+@Post('reset-password')
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ 
+  summary: 'Réinitialiser le mot de passe avec le code PIN',
+  description: 'Utilise le code reçu par email pour définir un nouveau mot de passe'
+})
+@ApiBody({ type: ResetPasswordDto })
+@ApiResponse({ 
+  status: 200, 
+  description: 'Mot de passe mis à jour avec succès',
+  schema: {
+    example: {
+      success: true,
+      message: 'Mot de passe mis à jour avec succès'
+    }
+  }
+})
+@ApiBadRequestResponse({ 
+  description: 'Code invalide, expiré ou mot de passe faible',
+  schema: {
+    example: {
+      success: false,
+      message: 'Code invalide ou expiré'
+    }
+  }
+})
+async resetPassword(@Body() dto: ResetPasswordDto, @Req() req: any) {
+  return this.authService.resetPassword(dto, req);
+}
+
+
+
+
 
   @Public()
   @Post('verify-account')
