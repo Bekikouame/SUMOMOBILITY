@@ -14,46 +14,56 @@ export class ProfilesService {
   // ==================== CLIENT PROFILES ====================
 
   async createClientProfile(userId: string, dto: CreateClientProfileDto) {
-    // Vérifier que l'utilisateur existe et a le bon rôle
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
+  const user = await this.prisma.user.findUnique({
+    where: { id: userId },
+  });
 
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
+  if (!user) {
+    throw new NotFoundException('Utilisateur non trouvé');
+  }
 
-    if (user.role !== UserRole.CLIENT) {
-      throw new BadRequestException('Seuls les clients peuvent créer un profil client');
-    }
+  if (user.role !== UserRole.CLIENT) {
+    throw new BadRequestException('Seuls les clients peuvent créer un profil client');
+  }
 
-    // Vérification directe au lieu de la relation
-    const existingClientProfile = await this.prisma.clientProfile.findUnique({
-      where: { userId: userId }
-    });
-
-    if (existingClientProfile) {
-      throw new BadRequestException('Le profil client existe déjà');
-    }
-
-    return this.prisma.clientProfile.create({
-      data: {
-        userId,
-        ...dto,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            phone: true,
-            email: true,
-          },
+  //  Retourner le profil existant au lieu de lancer une erreur
+  const existingClientProfile = await this.prisma.clientProfile.findUnique({
+    where: { userId: userId },
+    include: {
+      user: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          email: true,
         },
       },
-    });
+    },
+  });
+
+  if (existingClientProfile) {
+    return existingClientProfile; 
   }
+
+  return this.prisma.clientProfile.create({
+    data: {
+      userId,
+      ...dto,
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          email: true,
+        },
+      },
+    },
+  });
+}
 
   async getClientProfile(profileId: string, requestUserId: string) {
     const profile = await this.prisma.clientProfile.findUnique({

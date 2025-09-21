@@ -19,6 +19,8 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { LocationsModule } from './modules/locations/locations.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { RideTrackingModule } from './modules/rides/tracking/ride-tracking.module';
+import { CarpoolController } from './modules/carpool/carpool.controller';
+import { CarpoolModule } from './modules/carpool/carpool.module';
 
 @Module({
   imports: [
@@ -44,9 +46,11 @@ import { RideTrackingModule } from './modules/rides/tracking/ride-tracking.modul
     NotificationsModule,
     LocationsModule,
     AdminModule,
-    RideTrackingModule
+    RideTrackingModule,
+    CarpoolModule
     
   ],
+  controllers: [CarpoolController],
   
    
 })

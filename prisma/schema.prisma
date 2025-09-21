@@ -85,6 +85,14 @@ enum NotificationType {
   PAYMENT_FAILED       // Paiement échoué
   DRIVER_APPROVED      // Chauffeur approuvé
   SYSTEM_MAINTENANCE   // Maintenance système
+  CARPOOL_REQUEST_RECEIVED  // Demande de covoiturage reçue
+  CARPOOL_REQUEST_ACCEPTED  // Demande acceptée
+  CARPOOL_REQUEST_REJECTED  // Demande refusée
+  CARPOOL_REQUEST_EXPIRED   // Demande expirée
+  CARPOOL_PASSENGER_JOINED  // Nouveau passager rejoint
+  CARPOOL_PASSENGER_LEFT    // Passager a quitté
+  CARPOOL_ROUTE_UPDATED     // Itinéraire modifié
+  CARPOOL_REMINDER          // Rappel covoiturage
 }
 
 // Canaux de notification
@@ -162,6 +170,10 @@ model ClientProfile {
   defaultPickupAddress   String?
   loyaltyPoints         Int           @default(0)
   vipStatus             Boolean       @default(false)
+// covoiturage
+ sharedPassengers    SharedPassenger[]
+  carpoolRequests     CarpoolRequest[]
+
   
   // Relations
   reservations Reservation[]
@@ -302,11 +314,36 @@ model Reservation {
   // Détails du trajet
   pickupAddress    String?
   destinationAddress String?
+
+  pickupLatitude      Float?
+  pickupLongitude     Float?
+  destinationLatitude Float?
+  destinationLongitude Float?
+
   estimatedDistance Float?       // Distance estimée en km
   estimatedPrice   Decimal?      @db.Decimal(10,2)
   passengerCount   Int          @default(1)
   notes            String?
   
+
+ // Champs covoiturage
+  isSharedRide         Boolean @default(false)
+  maxSharedPassengers  Int     @default(0)
+  currentSharedPassengers Int  @default(0)
+  sharePreference      String? // "SAME_DESTINATION", "FLEXIBLE_ROUTE"
+  maxDetourMinutes     Int?    @default(15)
+
+
+// Prix covoiturage  
+  basePrice           Decimal? @db.Decimal(8,2)
+  sharedPricePerPerson Decimal? @db.Decimal(8,2)
+  totalSavings        Decimal? @db.Decimal(8,2)
+
+
+//  Relations
+  sharedPassengers    SharedPassenger[]
+  carpoolRequests     CarpoolRequest[]
+
   // Relation avec course réelle (optionnelle)
   rideId String? @unique
   ride   Ride?   @relation(fields: [rideId], references: [id])
@@ -321,13 +358,81 @@ model Reservation {
   
   createdAt DateTime @default(now()) 
   updatedAt DateTime @updatedAt
-  
+
+  @@index([isSharedRide, scheduledAt])
+  @@index([pickupLatitude, pickupLongitude, isSharedRide])
   @@index([clientId])
   @@index([status])
   @@index([scheduledAt])
   @@index([canceledAt])
   
   @@map("reservations")
+}
+
+
+// Passagers dans une course partagée
+
+model SharedPassenger {
+  id              String @id @default(cuid())
+  reservationId   String
+  reservation     Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  
+  passengerId     String
+  passenger       ClientProfile @relation(fields: [passengerId], references: [id])
+  
+  pickupAddress      String
+  destinationAddress String
+  pickupLatitude     Float?
+  pickupLongitude    Float?
+  destLatitude       Float?
+  destLongitude      Float?
+  
+  pickupOrder     Int
+  dropoffOrder    Int
+  fareShare       Decimal @db.Decimal(8,2)
+  paymentStatus   PaymentStatus @default(PENDING)
+  status          String @default("CONFIRMED")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([reservationId])
+  @@index([passengerId])
+  @@map("shared_passengers")
+}
+
+model CarpoolRequest {
+  id                String @id @default(cuid())
+  requesterId       String
+  requester         ClientProfile @relation(fields: [requesterId], references: [id])
+  
+  targetReservationId String
+  targetReservation   Reservation @relation(fields: [targetReservationId], references: [id])
+  
+  pickupAddress      String
+  destinationAddress String
+  pickupLatitude     Float
+  pickupLongitude    Float
+  destLatitude       Float
+  destLongitude      Float
+  
+  routeCompatibility Float?
+  additionalDistance Float?
+  additionalTime     Int?
+  estimatedFare      Decimal @db.Decimal(8,2)
+  potentialSavings   Decimal @db.Decimal(8,2)
+  
+  status             String @default("PENDING")
+  requestMessage     String?
+  responseMessage    String?
+  
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  respondedAt DateTime?
+  
+  @@index([targetReservationId, status])
+  @@index([requesterId])
+  @@map("carpool_requests")
 }
 
 // Courses (trajets réels)
