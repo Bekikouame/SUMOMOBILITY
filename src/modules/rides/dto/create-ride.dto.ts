@@ -1,50 +1,57 @@
 // src/modules/rides/dto/create-ride.dto.ts
+import { IsNumber, IsString, IsOptional, IsIn } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsOptional, IsNumber, IsInt, Min, Max, IsEnum } from 'class-validator';
 
 export class CreateRideDto {
-  @ApiProperty({ 
-    description: 'Type de course',
-    enum: ['STANDARD', 'PREMIUM', 'SHARED', 'VIP'],
-    required: false 
-  })
-  @IsOptional()
-  @IsString()
-  rideType?: string;
-
-  @ApiProperty({ description: 'Adresse de prise en charge' })
-  @IsString()
-  pickupAddress: string;
-
-  @ApiProperty({ description: 'Adresse de destination' })
-  @IsString()
-  destinationAddress: string;
-
-  @ApiProperty({ description: 'Latitude point de départ' })
+  @ApiProperty({ description: 'Latitude du point de départ' })
   @IsNumber()
   pickupLatitude: number;
 
-  @ApiProperty({ description: 'Longitude point de départ' })
+  @ApiProperty({ description: 'Longitude du point de départ' })
   @IsNumber()
   pickupLongitude: number;
 
-  @ApiProperty({ description: 'Latitude destination' })
+  @ApiProperty({ description: 'Latitude de destination' })
   @IsNumber()
   destinationLatitude: number;
 
-  @ApiProperty({ description: 'Longitude destination' })
+  @ApiProperty({ description: 'Longitude de destination' })
   @IsNumber()
   destinationLongitude: number;
 
-  @ApiProperty({ description: 'Nombre de passagers', minimum: 1, maximum: 8, default: 1 })
+  @ApiProperty({ description: 'Adresse de départ', required: false })
   @IsOptional()
-  @IsInt()
-  @Min(1)
-  @Max(8)
+  @IsString()
+  pickupAddress?: string;
+
+  @ApiProperty({ description: 'Adresse de destination', required: false })
+  @IsOptional()
+  @IsString()
+  destinationAddress?: string;
+
+  @ApiProperty({ description: 'Type de véhicule', enum: ['STANDARD', 'PREMIUM', 'VIP'], required: false })
+  @IsOptional()
+  @IsString()
+  @IsIn(['STANDARD', 'PREMIUM', 'VIP'])
+  rideType?: string;
+
+  @ApiProperty({ description: 'Nombre de passagers', required: false })
+  @IsOptional()
+  @IsNumber()
   passengerCount?: number;
 
-  @ApiProperty({ description: 'Notes pour le chauffeur', required: false })
+  @ApiProperty({ description: 'Notes supplémentaires', required: false })
   @IsOptional()
   @IsString()
   notes?: string;
+
+  // OBLIGATOIRE - RETIRER @IsOptional()
+  @ApiProperty({ description: 'Prix accepté par le client après estimation' })
+  @IsNumber()
+  acceptedFare: number; // Plus d'interrogation, plus d'@IsOptional()
+
+  @ApiProperty({ description: 'ID de l\'estimation pour traçabilité', required: false })
+  @IsOptional()
+  @IsString()
+  estimationId?: string;
 }

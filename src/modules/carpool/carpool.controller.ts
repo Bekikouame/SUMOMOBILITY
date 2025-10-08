@@ -39,7 +39,6 @@ export class CarpoolController {
       throw new UnauthorizedException('Utilisateur non authentifié');
     }
     
-    // Utiliser l'ID de l'utilisateur directement
     const clientId = req.user.id;
     return this.carpoolService.createCarpoolReservation(createDto, clientId);
   }
@@ -76,7 +75,6 @@ export class CarpoolController {
     @Param('userId') userId: string,
     @Request() req: any
   ) {
-    // Vérifier que l'utilisateur peut accéder à ses propres demandes
     if (req.user.id !== userId) {
       throw new UnauthorizedException('Accès non autorisé');
     }
@@ -93,7 +91,6 @@ export class CarpoolController {
       throw new UnauthorizedException('Utilisateur non authentifié');
     }
     
-    // Pour un chauffeur, vous devrez adapter selon votre logique
     const driverId = req.user.id;
     return this.carpoolService.getDriverPendingRequests(driverId);
   }
@@ -121,7 +118,6 @@ export class CarpoolController {
     return this.carpoolService.getReservationTracking(reservationId);
   }
 
-  // Route de test pour vérifier l'authentification
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @Get('test-auth')
@@ -134,6 +130,62 @@ export class CarpoolController {
         email: req.user.email,
         role: req.user.role
       }
+    };
+  }
+
+  // ========================================
+  // 🎯 NOUVEAUX ENDPOINTS - PRICING YANGO
+  // ========================================
+
+  /**
+   * 💰 GET /carpool/:reservationId/my-price
+   * Voir MON prix actuel (simple et rapide)
+   * 🔒 Accessible par conducteur et passagers
+   */
+  @Get(':reservationId/my-price')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiResponse({ status: 200, description: 'Prix actuel de l\'utilisateur' })
+  async getMyCurrentPrice(
+    @Param('reservationId') reservationId: string,
+    @Request() req
+  ) {
+    const userId = req.user.id;
+    return this.carpoolService.getMyCurrentPrice(reservationId, userId);
+  }
+
+  /**
+   * 📊 GET /carpool/:reservationId/pricing-summary
+   * Voir le résumé COMPLET des prix
+   * 🔒 Conducteur voit tout, passagers voient leur prix uniquement
+   */
+  @Get(':reservationId/pricing-summary')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiResponse({ status: 200, description: 'Résumé détaillé des prix' })
+  async getPricingSummary(
+    @Param('reservationId') reservationId: string,
+    @Request() req
+  ) {
+    const userId = req.user.id;
+    return this.carpoolService.getCarpoolPricingSummary(reservationId, userId);
+  }
+
+  /**
+   * 🔄 POST /carpool/:reservationId/recalculate-prices
+   * Forcer le recalcul des prix (admin/debug)
+   */
+  @Post(':reservationId/recalculate-prices')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiResponse({ status: 200, description: 'Prix recalculés' })
+  async recalculatePrices(
+    @Param('reservationId') reservationId: string
+  ) {
+    await this.carpoolService.recalculateCarpoolPricesYango(reservationId);
+    return { 
+      success: true,
+      message: 'Prix recalculés avec succès selon le modèle Yango' 
     };
   }
 }

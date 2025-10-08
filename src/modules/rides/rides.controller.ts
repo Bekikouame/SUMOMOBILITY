@@ -26,6 +26,10 @@ import { CreateRideDto } from './dto/create-ride.dto';
 import { CancelRideDto } from './dto/cancel-ride.dto';
 import { CreateRatingDto } from './dto/create-rating.dto';
 import { QueryRidesDto } from './dto/query-rides.dto';
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { Roles } from '../../auth/decorators/roles.decorator';
+import { EstimateFareDto } from './dto/estimate-fare.dto';
+import { UserRole } from '@prisma/client';
 
 @ApiTags('Rides')
 @ApiBearerAuth()
@@ -153,4 +157,11 @@ export class RidesController {
     const userId = this.extractUserId(req);
     return this.ridesService.rateRide(userId, id, ratingDto);
   }
+  // rides.controller.ts
+@Post('estimate-fare')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.CLIENT)
+async estimateFare(@Body() estimateDto: EstimateFareDto) {
+  return this.ridesService.estimateFare(estimateDto);
+}
 }

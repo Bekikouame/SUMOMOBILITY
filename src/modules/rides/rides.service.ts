@@ -15,6 +15,7 @@ import { QueryRidesDto } from './dto/query-rides.dto';
 import { Decimal } from '@prisma/client/runtime/library';
 import { NotificationsService } from '../notifications/services/notifications.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EstimateFareDto } from './dto/estimate-fare.dto';
 
 @Injectable()
 export class RidesService {
@@ -29,7 +30,7 @@ export class RidesService {
   // ===============================
   // CRÉATION DE COURSE
   // ===============================
-// Méthode createRide corrigée
+// Dans rides.service.ts - Version avec validation
 async createRide(userId: string, createRideDto: CreateRideDto) {
   this.logger.log(`Creating ride for user ${userId}`);
 
@@ -38,7 +39,12 @@ async createRide(userId: string, createRideDto: CreateRideDto) {
     throw new BadRequestException('L\'ID utilisateur est requis');
   }
 
-  // Vérifier que l'utilisateur est CLIENT (une seule fois)
+  // NOUVEAU : Vérifier que acceptedFare est fourni
+  if (!createRideDto.acceptedFare) {
+    throw new BadRequestException('Le prix accepté est requis. Veuillez d\'abord obtenir une estimation.');
+  }
+
+  // Vérifier que l'utilisateur est CLIENT
   const user = await this.prisma.user.findUnique({
     where: { id: userId },
     include: { clientProfile: true }
@@ -52,7 +58,7 @@ async createRide(userId: string, createRideDto: CreateRideDto) {
     throw new BadRequestException('Seuls les clients peuvent demander une course');
   }
 
-  // Calculer distance et tarif estimé
+  // Recalculer et valider le prix accepté
   const distance = this.calculateDistance(
     createRideDto.pickupLatitude,
     createRideDto.pickupLongitude,
@@ -60,9 +66,17 @@ async createRide(userId: string, createRideDto: CreateRideDto) {
     createRideDto.destinationLongitude
   );
 
-  const estimatedFare = this.calculateFare(distance, createRideDto.rideType || 'STANDARD');
+  const serverCalculatedFare = this.calculateFare(distance, createRideDto.rideType || 'STANDARD');
 
-  // Créer la course
+  // Vérifier que le prix accepté correspond au prix calculé (tolérance 5%)
+  const tolerance = serverCalculatedFare * 0.05;
+  if (Math.abs(createRideDto.acceptedFare - serverCalculatedFare) > tolerance) {
+    throw new BadRequestException(
+      `Le prix a changé. Prix calculé: ${serverCalculatedFare} FCFA, Prix reçu: ${createRideDto.acceptedFare} FCFA. Veuillez recalculer l'estimation.`
+    );
+  }
+
+  // Créer la course avec le prix validé
   const ride = await this.prisma.ride.create({
     data: {
       clientId: user.clientProfile.id,
@@ -77,8 +91,9 @@ async createRide(userId: string, createRideDto: CreateRideDto) {
       notes: createRideDto.notes,
       status: RideStatus.REQUESTED,
       requestedAt: new Date(),
-      baseFare: estimatedFare,
-      totalFare: estimatedFare,
+      baseFare: createRideDto.acceptedFare,
+      totalFare: createRideDto.acceptedFare,
+      distanceKm: distance,
     },
     include: {
       client: {
@@ -87,28 +102,12 @@ async createRide(userId: string, createRideDto: CreateRideDto) {
     }
   });
 
-  // Notifier la création de course au client
-  await this.notificationsService.sendNotification({
-    type: NotificationType.RIDE_REQUEST,
-    userId: userId,
-    variables: {
-      message: `Demande de course créée avec succès`,
-      rideId: ride.id,
-      pickup: ride.pickupAddress,
-      destination: ride.destinationAddress,
-      estimatedFare: `${estimatedFare} FCFA`,
-      details: `Votre course de ${ride.pickupAddress} vers ${ride.destinationAddress} a été enregistrée`
-    },
-    metadata: { rideId: ride.id }
-  });
 
-  // Lancer la recherche de chauffeurs disponibles
-  this.findAvailableDrivers(ride.id).catch(error => {
-    this.logger.error(`Error finding drivers for ride ${ride.id}:`, error);
-  });
-
+  this.logger.log(`Ride ${ride.id} created successfully`);
   return ride;
+  // ... reste du code identique
 }
+
 
   // ===============================
   // RECHERCHE CHAUFFEURS DISPONIBLES
@@ -314,6 +313,10 @@ return tx.ride.update({
     this.logger.log(`Ride ${rideId} accepted by driver ${driverProfile.id}`);
     return updatedRide;
   }
+
+
+
+  
 
   // ===============================
   // DÉMARRER UNE COURSE
@@ -713,6 +716,50 @@ return tx.ride.update({
       hasMore: offset + limit < total
     };
   }
+
+
+// Dans rides.service.ts
+async estimateFare(estimateDto: EstimateFareDto) {
+  // Calculer la distance avec votre méthode existante
+  const distance = this.calculateDistance(
+    estimateDto.pickupLatitude,
+    estimateDto.pickupLongitude,
+    estimateDto.destinationLatitude,
+    estimateDto.destinationLongitude
+  );
+
+  // Calculer le temps estimé (30 km/h moyenne en ville)
+  const estimatedDurationMinutes = Math.ceil((distance / 30) * 60);
+  const estimationId = `est_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+  // Calculer les différents tarifs
+  const fareOptions = {
+    STANDARD: {
+      name: 'Standard',
+      price: this.calculateFare(distance, 'STANDARD'),
+      description: 'Véhicule économique, confortable'
+    },
+    PREMIUM: {
+      name: 'Premium',
+      price: this.calculateFare(distance, 'PREMIUM'),
+      description: 'Véhicule haut de gamme, climatisé'
+    },
+    VIP: {
+      name: 'VIP',
+      price: this.calculateFare(distance, 'VIP'),
+      description: 'Véhicule de luxe avec chauffeur expérimenté'
+    }
+  };
+
+  return {
+    estimationId,
+    distance: Math.round(distance * 10) / 10, // Arrondir à 1 décimale
+    estimatedDuration: `${estimatedDurationMinutes} min`,
+    fareOptions,
+    calculationMethod: 'haversine' // Indiquer la méthode utilisée
+  };
+}
+
 
   async findRideById(userId: string, rideId: string) {
     const ride = await this.prisma.ride.findUnique({
