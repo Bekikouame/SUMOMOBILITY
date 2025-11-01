@@ -137,21 +137,61 @@ export class RideTrackingService {
   // ===============================
   // CALCUL ETA (TEMPS D'ARRIVÉE ESTIMÉ)
   // ===============================
+  // private async calculateETA(
+  //   currentLat: number,
+  //   currentLng: number,
+  //   destinationLat: number,
+  //   destinationLng: number
+  // ): Promise<number> {
+  //   // Calcul basique - distance euclidienne convertie en temps
+  //   const distance = this.calculateDistance(currentLat, currentLng, destinationLat, destinationLng);
+    
+  //   // Vitesse moyenne estimée en ville : 25 km/h
+  //   const avgSpeedKmh = 25;
+  //   const etaMinutes = Math.ceil((distance / avgSpeedKmh) * 60);
+    
+  //   return Math.max(etaMinutes, 2); // Minimum 2 minutes
+  // }
+
+
+
+
   private async calculateETA(
-    currentLat: number,
-    currentLng: number,
-    destinationLat: number,
-    destinationLng: number
-  ): Promise<number> {
-    // Calcul basique - distance euclidienne convertie en temps
-    const distance = this.calculateDistance(currentLat, currentLng, destinationLat, destinationLng);
-    
-    // Vitesse moyenne estimée en ville : 25 km/h
-    const avgSpeedKmh = 25;
-    const etaMinutes = Math.ceil((distance / avgSpeedKmh) * 60);
-    
-    return Math.max(etaMinutes, 2); // Minimum 2 minutes
+  currentLat: number,
+  currentLng: number,
+  destinationLat: number,
+  destinationLng: number
+): Promise<number> {
+  const distance = this.calculateDistance(currentLat, currentLng, destinationLat, destinationLng);
+  
+  // Calculer la vitesse moyenne selon l'heure
+  const now = new Date();
+  const hour = now.getHours();
+  const day = now.getDay();
+  
+  let avgSpeedKmh = 20; // Par défaut
+  
+  // Week-end : circulation plus fluide
+  if (day === 0 || day === 6) {
+    avgSpeedKmh = 25;
   }
+  // Heures de pointe : très lent
+  else if ((hour >= 6 && hour <= 9) || (hour >= 16 && hour <= 20)) {
+    avgSpeedKmh = 12;
+  }
+  // Heures creuses : moyen
+  else if (hour >= 10 && hour <= 15) {
+    avgSpeedKmh = 22;
+  }
+  // Nuit : rapide
+  else if (hour >= 21 || hour <= 5) {
+    avgSpeedKmh = 30;
+  }
+  
+  const etaMinutes = Math.ceil((distance / avgSpeedKmh) * 60);
+  
+  return Math.max(etaMinutes, 5); // Minimum 5 minutes
+}
 
   // ===============================
   // RÉCUPÉRATION POSITION EN TEMPS RÉEL
@@ -247,31 +287,70 @@ export class RideTrackingService {
   // ===============================
   // GESTION CHAUFFEUR HORS LIGNE
   // ===============================
-  async markDriverOffline(driverId: string) {
-    await this.prisma.driverLocation.update({
-      where: { driverId },
-      data: {
-        isOnline: false,
-        isAvailable: false
-      }
-    });
+  // async markDriverOffline(driverId: string) {
+  //   await this.prisma.driverLocation.update({
+  //     where: { driverId },
+  //     data: {
+  //       isOnline: false,
+  //       isAvailable: false
+    //   }
+    // });
 
     // Vérifier si le chauffeur a une course active
-    const activeRide = await this.prisma.ride.findFirst({
-      where: {
-        driverId,
-        status: { in: [RideStatus.ACCEPTED, RideStatus.IN_PROGRESS] }
-      }
-    });
+  //   const activeRide = await this.prisma.ride.findFirst({
+  //     where: {
+  //       driverId,
+  //       status: { in: [RideStatus.ACCEPTED, RideStatus.IN_PROGRESS] }
+  //     }
+  //   });
 
-    if (activeRide) {
-      this.eventEmitter.emit('driver.went.offline', {
-        rideId: activeRide.id,
-        driverId,
-        clientId: activeRide.clientId
-      });
+  //   if (activeRide) {
+  //     this.eventEmitter.emit('driver.went.offline', {
+  //       rideId: activeRide.id,
+  //       driverId,
+  //       clientId: activeRide.clientId
+  //     });
+  //   }
+  // }
+
+
+
+async markDriverOffline(driverId: string) {
+  // Vérifier si le chauffeur a une course active
+  const activeRide = await this.prisma.ride.findFirst({
+    where: {
+      driverId,
+      status: { in: [RideStatus.ACCEPTED, RideStatus.IN_PROGRESS] }
     }
+  });
+
+  // Si course active, ne pas marquer offline (tolérance réseau instable)
+  if (activeRide) {
+    this.logger.warn(`Driver ${driverId} has active ride, not marking offline yet`);
+    
+    // Juste émettre un warning au client
+    this.eventEmitter.emit('driver.connection.unstable', {
+      rideId: activeRide.id,
+      driverId,
+      clientId: activeRide.clientId
+    });
+    
+    return; // Ne pas marquer offline
   }
+
+  // Pas de course active, marquer offline normalement
+  await this.prisma.driverLocation.update({
+    where: { driverId },
+    data: {
+      isOnline: false,
+      isAvailable: false
+    }
+  });
+
+  this.logger.log(`Driver ${driverId} marked offline`);
+}
+
+
 
   // ===============================
   // MÉTHODES UTILITAIRES

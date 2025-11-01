@@ -63,7 +63,7 @@ export class CarpoolPricingService {
     const timeCost = 0; // Vous pouvez ajouter un coût temps si besoin
     const subtotal = this.baseFare + distanceCost + timeCost;
     
-    // ✅ CORRECTION : Le prix total = subtotal (PAS +15%)
+    //  CORRECTION : Le prix total = subtotal (PAS +15%)
     const totalPrice = subtotal;
     
     // La commission est calculée mais DÉDUITE des revenus du chauffeur

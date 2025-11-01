@@ -734,7 +734,7 @@ async getCarpoolPricingSummary(reservationId: string, requestingUserId: string) 
   };
 }
 /**
- * 💰 Obtenir le prix ACTUEL d'un passager ou conducteur
+ *  Obtenir le prix ACTUEL d'un passager ou conducteur
  * Utile pour afficher le prix en temps réel dans l'app
  */
 async getMyCurrentPrice(reservationId: string, userId: string) {

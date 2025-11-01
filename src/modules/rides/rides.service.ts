@@ -865,10 +865,51 @@ async estimateFare(estimateDto: EstimateFareDto) {
     return deg * (Math.PI/180);
   }
 
-  private calculateFare(distanceKm: number, rideType: string): number {
-    const baseFare = 500; // Base 500 FCFA
-    const perKmRate = rideType === 'PREMIUM' ? 200 : rideType === 'VIP' ? 300 : 150;
+ private calculateFare(distanceKm: number, rideType: string): number {
+    const baseFare = 500;
+    const perKmRate = rideType === 'PREMIUM' ? 350 : rideType === 'VIP' ? 500 : 250;
     
-    return baseFare + (distanceKm * perKmRate);
-  }
+    let finalFare = baseFare + (distanceKm * perKmRate);
+    
+    // Tarif minimum
+    const minimumFare = 1200;
+    if (finalFare < minimumFare) {
+      finalFare = minimumFare;
+    }
+    
+    // Heures de pointe (+30%)
+    if (this.isPeakHour()) {
+      finalFare = finalFare * 1.3;
+    }
+    
+    // Arrondir à la dizaine la plus proche
+    finalFare = Math.round(finalFare / 10) * 10;
+    
+    return finalFare;
 }
+
+
+
+  private isPeakHour(): boolean {
+    const now = new Date();
+    const hour = now.getHours();
+    const minutes = now.getMinutes();
+    const day = now.getDay(); // 0 = Dimanche, 1 = Lundi, ..., 6 = Samedi
+    
+    // Seulement Lundi à Vendredi
+    if (day === 0 || day === 6) {
+      return false;
+    }
+    
+    // Matin : 6h30 - 9h30
+    const isMorningPeak = (hour === 6 && minutes >= 30) || (hour >= 7 && hour < 9) || (hour === 9 && minutes <= 30);
+    
+    // Soir : 16h30 - 20h00
+    const isEveningPeak = (hour === 16 && minutes >= 30) || (hour >= 17 && hour < 20);
+    
+    return isMorningPeak || isEveningPeak;
+}
+ 
+}
+
+
