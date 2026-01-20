@@ -68,7 +68,7 @@ export class NotificationTasks {
     try {
       await this.notificationsService.retryFailedNotifications();
     } catch (error) {
-      this.logger.error(`Erreur retry notifications: ${error.message}`);
+      this.logger.log(`Erreur retry notifications: ${error.message}`);
     }
   }
 

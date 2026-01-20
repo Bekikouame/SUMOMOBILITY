@@ -31,14 +31,14 @@ export class PushService {
       // Simuler délai réseau
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      // Simuler parfois des échecs (5%)
+      // Simuler parfois des échecs(5%)
       if (Math.random() < 0.05) {
         throw new Error('Échec temporaire du service push');
       }
 
       return true;
     } catch (error) {
-      this.logger.error(`Erreur push notification: ${error.message}`);
+      this.logger.log(`Erreur push notification: ${error.message}`);
       return false;
     }
   }

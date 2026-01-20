@@ -1,159 +1,223 @@
-import { Injectable, Logger } from '@nestjs/common';
+// src/modules/admin/services/auto-approval.service.ts
+
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { 
-  DriverStatus, 
-  DocumentStatus, 
-  VehicleStatus,
-  UserRole 
-} from '@prisma/client';
-import { Cron } from '@nestjs/schedule';
+import { EmailService } from '../../email/email.service';
 
 @Injectable()
 export class AutoApprovalService {
-  private readonly logger = new Logger(AutoApprovalService.name);
-  private readonly AUTO_APPROVE = process.env.AUTO_APPROVE === 'true' || process.env.NODE_ENV === 'development';
+  constructor(
+    private prisma: PrismaService,
+    private emailService: EmailService,
+  ) {}
 
-  constructor(private prisma: PrismaService) {}
-
-  // ===============================
-  // MÉTHODE PRINCIPALE D'AUTO-APPROBATION
-  // ===============================
-  async autoApproveAll() {
-    if (!this.AUTO_APPROVE) {
-      this.logger.log('Auto-approval disabled in production');
-      return;
-    }
-
-    this.logger.log('🚀 Starting auto-approval process...');
-
-    const results = await this.prisma.$transaction(async (tx) => {
-      // 1. Approuver tous les chauffeurs en attente
-      const drivers = await tx.driverProfile.updateMany({
-        where: { status: DriverStatus.PENDING },
-        data: { status: DriverStatus.APPROVED }
-      });
-
-      // 2. Approuver tous les documents en attente
-      const documents = await tx.driverDocument.updateMany({
-        where: { status: DocumentStatus.PENDING },
-        data: { 
-          status: DocumentStatus.APPROVED,
-          reviewedAt: new Date(),
-          reviewedBy: 'AUTO_APPROVAL_SYSTEM'
-        }
-      });
-
-      // 3. Vérifier tous les véhicules non vérifiés
-      const vehicles = await tx.vehicle.updateMany({
-        where: { verified: false },
-        data: { 
-          verified: true,
-          verifiedAt: new Date(),
-          status: VehicleStatus.AVAILABLE
-        }
-      });
-
-      return { drivers, documents, vehicles };
-    });
-
-    this.logger.log(`✅ Auto-approval completed:
-      - ${results.drivers.count} drivers approved
-      - ${results.documents.count} documents approved
-      - ${results.vehicles.count} vehicles verified`);
-
-    return results;
-  }
-
-  // ===============================
-  // APPROBATION D'UN CHAUFFEUR SPÉCIFIQUE
-  // ===============================
-  async approveDriver(driverId: string, autoApprove = this.AUTO_APPROVE) {
-    if (!autoApprove) {
-      this.logger.log(`Manual approval required for driver ${driverId}`);
-      return null;
-    }
-
-    const driver = await this.prisma.driverProfile.update({
+  // ✅ MÉTHODE 1 : Approuver + Email
+  async approveDriverWithEmail(driverId: string) {
+    const driver = await this.prisma.driverProfile.findUnique({
       where: { id: driverId },
-      data: { status: DriverStatus.APPROVED },
-      include: {
-        user: true,
-        documents: true,
-        vehicles: true
-      }
+      include: { user: true, vehicles: true }
     });
 
-    // Approuver aussi ses documents et véhicules
-    await this.prisma.$transaction([
-      this.prisma.driverDocument.updateMany({
-        where: { 
-          driverId: driverId,
-          status: DocumentStatus.PENDING 
-        },
-        data: { 
-          status: DocumentStatus.APPROVED,
-          reviewedAt: new Date(),
-          reviewedBy: 'AUTO_APPROVAL_SYSTEM'
-        }
-      }),
-      this.prisma.vehicle.updateMany({
-        where: { 
-          driverId: driverId,
-          verified: false 
-        },
-        data: { 
-          verified: true,
-          verifiedAt: new Date(),
-          status: VehicleStatus.AVAILABLE
-        }
-      })
-    ]);
-
-    this.logger.log(`✅ Driver ${driverId} fully approved with documents and vehicles`);
-    return driver;
-  }
-
-  // ===============================
-  // APPROBATION D'UN DOCUMENT SPÉCIFIQUE
-  // ===============================
-  async approveDocument(documentId: string, autoApprove = this.AUTO_APPROVE) {
-    if (!autoApprove) {
-      this.logger.log(`Manual approval required for document ${documentId}`);
-      return null;
+    if (!driver) {
+      throw new NotFoundException('Profil chauffeur non trouvé');
     }
 
-    const document = await this.prisma.driverDocument.update({
-      where: { id: documentId },
+    if (driver.status === 'APPROVED') {
+      throw new ConflictException('Ce chauffeur est déjà approuvé');
+    }
+
+    // ✅ Enlever approvedAt
+    const updatedDriver = await this.prisma.driverProfile.update({
+      where: { id: driverId },
       data: { 
-        status: DocumentStatus.APPROVED,
-        reviewedAt: new Date(),
-        reviewedBy: 'AUTO_APPROVAL_SYSTEM'
-      }
+        status: 'APPROVED',
+      },
+      include: { user: true, vehicles: true }
     });
 
-    this.logger.log(` Document ${documentId} approved`);
-    return document;
-  }
-
-  // ===============================
-  // VÉRIFICATION D'UN VÉHICULE SPÉCIFIQUE
-  // ===============================
-  async verifyVehicle(vehicleId: string, autoApprove = this.AUTO_APPROVE) {
-    if (!autoApprove) {
-      this.logger.log(`Manual verification required for vehicle ${vehicleId}`);
-      return null;
+    // Vérifier les véhicules
+    if (driver.vehicles && driver.vehicles.length > 0) {
+      await Promise.all(
+        driver.vehicles.map(vehicle =>
+          this.prisma.vehicle.update({
+            where: { id: vehicle.id },
+            data: { 
+              verified: true,
+              verifiedAt: new Date() // ✅ Ce champ existe dans Vehicle
+            }
+          })
+        )
+      );
     }
 
-    const vehicle = await this.prisma.vehicle.update({
+    // Envoyer l'email
+    let emailSent = false;
+    try {
+      await this.emailService.sendDriverApprovalEmail(
+        driver.user.email,
+        driver.user.firstName,
+        driver.user.lastName
+      );
+      emailSent = true;
+      console.log('✅ Email envoyé à:', driver.user.email);
+    } catch (error) {
+      console.error('⚠️ Erreur envoi email:', error);
+    }
+
+    return {
+      driver: updatedDriver,
+      emailSent
+    };
+  }
+
+  // ✅ MÉTHODE 2 : Rejeter + Email
+  async rejectDriverWithEmail(driverId: string, reason?: string) {
+    const driver = await this.prisma.driverProfile.findUnique({
+      where: { id: driverId },
+      include: { user: true }
+    });
+
+    if (!driver) {
+      throw new NotFoundException('Profil chauffeur non trouvé');
+    }
+
+    if (driver.status === 'REJECTED') {
+      throw new ConflictException('Ce chauffeur est déjà rejeté');
+    }
+
+    // ✅ Enlever rejectedAt
+    const updatedDriver = await this.prisma.driverProfile.update({
+      where: { id: driverId },
+      data: { 
+        status: 'REJECTED',
+      },
+      include: { user: true }
+    });
+
+    let emailSent = false;
+    try {
+      await this.emailService.sendDriverRejectionEmail(
+        driver.user.email,
+        driver.user.firstName,
+        driver.user.lastName,
+        reason
+      );
+      emailSent = true;
+      console.log('✅ Email de rejet envoyé à:', driver.user.email);
+    } catch (error) {
+      console.error('⚠️ Erreur envoi email:', error);
+    }
+
+    return {
+      driver: updatedDriver,
+      emailSent
+    };
+  }
+
+  // ✅ MÉTHODE 3 : Approuver simple
+  async approveDriver(driverId: string) {
+    const driver = await this.prisma.driverProfile.findUnique({
+      where: { id: driverId },
+      include: { user: true, vehicles: true }
+    });
+
+    if (!driver) {
+      throw new NotFoundException('Profil chauffeur non trouvé');
+    }
+
+    return this.prisma.driverProfile.update({
+      where: { id: driverId },
+      data: { 
+        status: 'APPROVED',
+      },
+      include: { user: true, vehicles: true }
+    });
+  }
+
+  // ✅ MÉTHODE 4 : Vérifier véhicule
+  async verifyVehicle(vehicleId: string) {
+    const vehicle = await this.prisma.vehicle.findUnique({
+      where: { id: vehicleId }
+    });
+
+    if (!vehicle) {
+      throw new NotFoundException('Véhicule non trouvé');
+    }
+
+    return this.prisma.vehicle.update({
       where: { id: vehicleId },
       data: { 
         verified: true,
-        verifiedAt: new Date(),
-        status: VehicleStatus.AVAILABLE
+        verifiedAt: new Date()
+      },
+      include: {
+        driver: {
+          include: { user: true }
+        }
       }
     });
-
-    this.logger.log(`✅ Vehicle ${vehicleId} verified and available`);
-    return vehicle;
   }
+
+ 
+// ✅ MÉTHODE 5 : Auto-approuver tout + emails
+async autoApproveAll() {
+  const pendingDrivers = await this.prisma.driverProfile.findMany({
+    where: { status: 'PENDING' },
+    include: { user: true, vehicles: true },
+  });
+
+  let driversApproved = 0; 
+  const emailResults: { email: string; sent: boolean }[] = [];
+
+  for (const driver of pendingDrivers) {
+    // 1) Mettre le driver en APPROVED
+    const updatedDriver = await this.prisma.driverProfile.update({
+      where: { id: driver.id },
+      data: {
+        status: 'APPROVED',
+      },
+      include: { user: true, vehicles: true },
+    });
+
+    driversApproved++; 
+    // 2) Vérifier tous ses véhicules
+    if (driver.vehicles && driver.vehicles.length > 0) {
+      await Promise.all(
+        driver.vehicles.map((vehicle) =>
+          this.prisma.vehicle.update({
+            where: { id: vehicle.id },
+            data: {
+              verified: true,
+              verifiedAt: new Date(),
+            },
+          }),
+        ),
+      );
+    }
+
+    // 3) Tenter l’envoi de l’email
+    let sent = false;
+    try {
+      await this.emailService.sendDriverApprovalEmail(
+        driver.user.email,
+        driver.user.firstName,
+        driver.user.lastName,
+      );
+      sent = true;
+      console.log(' Email auto-approve envoyé à :', driver.user.email);
+    } catch (error) {
+      console.error('Erreur envoi email auto-approve :', error);
+    }
+
+    emailResults.push({ email: driver.user.email, sent });
+  }
+
+  return {
+    message: 'Approbations automatiques effectuées',
+    driversApproved,      
+    emails: emailResults,
+  };
+}
+
+
 }

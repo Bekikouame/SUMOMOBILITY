@@ -60,4 +60,30 @@ export class FileUploadService {
       console.warn('Erreur lors de la suppression du fichier:', error);
     }
   }
+
+
+  async deleteDriverFolder(driverId: string): Promise<void> {
+    try {
+      const driverFolderPath = path.join(
+        process.cwd(),
+        'uploads',
+        'documents',
+        driverId
+      );
+
+      // Vérifier si le dossier existe
+      try {await fs.access(driverFolderPath);
+      } catch {
+        console.log(`ℹ️ Dossier ${driverId} n'existe pas`);
+        return;
+      }
+
+      // Supprimer le dossier et tout son contenu
+      await fs.rm(driverFolderPath, { recursive: true, force: true });
+
+      console.log(`✅ Dossier supprimé: ${driverFolderPath}`);
+    } catch (error) {
+      console.error(`❌ Erreur suppression dossier ${driverId}:`, error);
+    }
+  }
 }

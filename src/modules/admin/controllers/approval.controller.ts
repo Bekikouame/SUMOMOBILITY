@@ -1,9 +1,11 @@
 // src/modules/admin/controllers/approval.controller.ts
+
 import { 
   Controller, 
   Post, 
   Put, 
-  Param, 
+  Param,
+  Body, 
   UseGuards,
   HttpCode,
   HttpStatus 
@@ -25,7 +27,9 @@ import { UserRole } from '@prisma/client';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
 export class ApprovalController {
-  constructor(private autoApprovalService: AutoApprovalService) {}
+  constructor(
+    private autoApprovalService: AutoApprovalService
+  ) {} // ✅ CORRECTION ICI - enlever les autres injections
 
   // ===============================
   // AUTO-APPROUVER TOUT
@@ -43,21 +47,48 @@ export class ApprovalController {
   }
 
   // ===============================
-  // APPROUVER UN CHAUFFEUR ET SES ÉLÉMENTS
+  // ✅ NOUVEAU : APPROUVER UN CHAUFFEUR + EMAIL
   // ===============================
   @Put('drivers/:driverId/approve')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ 
     summary: 'Approuver un chauffeur',
-    description: 'Approuve le chauffeur et tous ses documents/véhicules' 
+    description: 'Approuve le chauffeur, vérifie son véhicule et envoie un email' 
   })
-  @ApiResponse({ status: 200, description: 'Chauffeur approuvé' })
+  @ApiResponse({ status: 200, description: 'Chauffeur approuvé et email envoyé' })
   async approveDriver(@Param('driverId') driverId: string) {
-    const driver = await this.autoApprovalService.approveDriver(driverId);
+    const result = await this.autoApprovalService.approveDriverWithEmail(driverId);
     return {
       success: true,
-      message: 'Chauffeur approuvé avec succès',
-      driver
+      message: 'Chauffeur approuvé avec succès. Email envoyé.',
+      driver: result.driver,
+      emailSent: result.emailSent
+    };
+  }
+
+  // ===============================
+  // ✅ NOUVEAU : REJETER UN CHAUFFEUR + EMAIL
+  // ===============================
+  @Put('drivers/:driverId/reject')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ 
+    summary: 'Rejeter un chauffeur',
+    description: 'Rejette le chauffeur et envoie un email avec la raison' 
+  })
+  @ApiResponse({ status: 200, description: 'Chauffeur rejeté et email envoyé' })
+  async rejectDriver(
+    @Param('driverId') driverId: string,
+    @Body() body: { reason?: string }
+  ) {
+    const result = await this.autoApprovalService.rejectDriverWithEmail(
+      driverId, 
+      body.reason
+    );
+    return {
+      success: true,
+      message: 'Chauffeur rejeté',
+      driver: result.driver,
+      emailSent: result.emailSent
     };
   }
 

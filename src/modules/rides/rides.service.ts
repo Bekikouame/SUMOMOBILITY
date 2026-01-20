@@ -7,47 +7,69 @@ import {
   Logger 
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { RideStatus, UserRole, VehicleStatus, DriverStatus, NotificationType } from '@prisma/client';
+import { RideStatus, UserRole, VehicleStatus, DriverStatus, NotificationType, DriverActivityStatus } from '@prisma/client';
 import { CreateRideDto } from './dto/create-ride.dto';
 import { CancelRideDto } from './dto/cancel-ride.dto';
 import { CreateRatingDto } from './dto/create-rating.dto';
 import { QueryRidesDto } from './dto/query-rides.dto';
-import { Decimal } from '@prisma/client/runtime/library';
 import { NotificationsService } from '../notifications/services/notifications.service';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EstimateFareDto } from './dto/estimate-fare.dto';
+import { Prisma } from '@prisma/client';
+import Decimal from 'decimal.js';
+import { WalletService } from '../wallet/wallet.service';
+
+
+
+
+type RideWithDriverProfile = Prisma.RideGetPayload<{
+  include: {
+    client: { include: { user: true } };
+    driver: { 
+      include: { 
+        user: true; 
+        driverProfile: true; 
+      };
+    };
+  };
+}>;
 
 @Injectable()
 export class RidesService {
   private readonly logger = new Logger(RidesService.name);
 
   constructor(
-    private prisma: PrismaService, 
-    private notificationsService: NotificationsService, 
-    private eventEmitter: EventEmitter2
+    private prisma: PrismaService,
+    private notificationsService: NotificationsService,
+    private notificationsGateway: NotificationsGateway,
+    private eventEmitter: EventEmitter2,
+    private walletService: WalletService
   ) {}
 
-  // ===============================
-  // CRÉATION DE COURSE
-  // ===============================
-// Dans rides.service.ts - Version avec validation
+  
+// ===============================
+// CRÉATION DE COURSE
+// ===============================
 async createRide(userId: string, createRideDto: CreateRideDto) {
   this.logger.log(`Creating ride for user ${userId}`);
 
   // Validation de l'ID utilisateur
   if (!userId) {
-    throw new BadRequestException('L\'ID utilisateur est requis');
+    throw new BadRequestException("L'ID utilisateur est requis");
   }
 
-  // NOUVEAU : Vérifier que acceptedFare est fourni
+  // Vérifier que acceptedFare est fourni
   if (!createRideDto.acceptedFare) {
-    throw new BadRequestException('Le prix accepté est requis. Veuillez d\'abord obtenir une estimation.');
+    throw new BadRequestException(
+      "Le prix accepté est requis. Veuillez d'abord obtenir une estimation.",
+    );
   }
 
   // Vérifier que l'utilisateur est CLIENT
   const user = await this.prisma.user.findUnique({
     where: { id: userId },
-    include: { clientProfile: true }
+    include: { clientProfile: true },
   });
 
   if (!user) {
@@ -63,16 +85,19 @@ async createRide(userId: string, createRideDto: CreateRideDto) {
     createRideDto.pickupLatitude,
     createRideDto.pickupLongitude,
     createRideDto.destinationLatitude,
-    createRideDto.destinationLongitude
+    createRideDto.destinationLongitude,
   );
 
-  const serverCalculatedFare = this.calculateFare(distance, createRideDto.rideType || 'STANDARD');
+  const serverCalculatedFare = this.calculateFare(
+    distance,
+    createRideDto.rideType || 'STANDARD',
+  );
 
   // Vérifier que le prix accepté correspond au prix calculé (tolérance 5%)
   const tolerance = serverCalculatedFare * 0.05;
   if (Math.abs(createRideDto.acceptedFare - serverCalculatedFare) > tolerance) {
     throw new BadRequestException(
-      `Le prix a changé. Prix calculé: ${serverCalculatedFare} FCFA, Prix reçu: ${createRideDto.acceptedFare} FCFA. Veuillez recalculer l'estimation.`
+      `Le prix a changé. Prix calculé: ${serverCalculatedFare} FCFA, Prix reçu: ${createRideDto.acceptedFare} FCFA. Veuillez recalculer l'estimation.`,
     );
   }
 
@@ -97,104 +122,193 @@ async createRide(userId: string, createRideDto: CreateRideDto) {
     },
     include: {
       client: {
-        include: { user: { select: { firstName: true, lastName: true, phone: true } } }
-      }
-    }
+        include: {
+          user: {
+            select: { firstName: true, lastName: true, phone: true },
+          },
+        },
+      },
+    },
   });
 
+  //  lancer la recherche de chauffeurs dispo + notifications + event WS
+  await this.findAvailableDrivers(ride.id);
 
   this.logger.log(`Ride ${ride.id} created successfully`);
   return ride;
-  // ... reste du code identique
 }
 
 
-  // ===============================
-  // RECHERCHE CHAUFFEURS DISPONIBLES
-  // ===============================
-  private async findAvailableDrivers(rideId: string) {
-    const ride = await this.prisma.ride.findUnique({
-      where: { id: rideId },
-      include: {
-        client: {
-          include: { user: true }
-        }
-      }
-    });
 
-    if (!ride || ride.status !== RideStatus.REQUESTED) {
-      return;
-    }
 
-    // Recherche chauffeurs dans un rayon de 10km
-    const availableDrivers = await this.prisma.driverProfile.findMany({
-      where: {
-        status: DriverStatus.APPROVED,
-        vehicles: {
-          some: {
-            status: VehicleStatus.AVAILABLE,
-            verified: true,
-            capacity: { gte: ride.passengerCount }
-          }
-        }
+
+
+ // ===============================
+// RECHERCHE CHAUFFEURS DISPONIBLES
+// ===============================
+private async findAvailableDrivers(rideId: string) {
+  const ride = await this.prisma.ride.findUnique({
+    where: { id: rideId },
+    include: {
+      client: {
+        include: { user: true },
       },
-      include: {
-        user: { select: { id: true, firstName: true, lastName: true, phone: true } },
-        vehicles: {
-          where: {
-            status: VehicleStatus.AVAILABLE,
-            verified: true
-          }
-        }
-      },
-      take: 10
+    },
+  });
+
+  if (!ride || ride.status !== RideStatus.REQUESTED) {
+    return;
+  }
+
+
+  const allDrivers = await this.prisma.driverProfile.findMany({
+    include: {
+      user: { select: { id: true, firstName: true, lastName: true } },
+      vehicles: true,
+    },
+  });
+
+  console.log('=== 🔍 DEBUG CHAUFFEURS ===');
+  console.log(`Total chauffeurs en BDD: ${allDrivers.length}`);
+  
+  allDrivers.forEach((driver, index) => {
+    console.log(`\n--- Chauffeur ${index + 1} ---`);
+    console.log(`Nom: ${driver.user.firstName} ${driver.user.lastName}`);
+    console.log(`UserID: ${driver.user.id}`);
+    console.log(`Status: ${driver.status}`);
+    console.log(`ActivityStatus: ${driver.activityStatus}`);
+    console.log(`Véhicules: ${driver.vehicles.length}`);
+    
+    driver.vehicles.forEach((vehicle, vIndex) => {
+      console.log(`  Véhicule ${vIndex + 1}:`);
+      console.log(`    - Status: ${vehicle.status}`);
+      console.log(`    - Verified: ${vehicle.verified}`);
+      console.log(`    - Capacity: ${vehicle.capacity}`);
     });
+  });
+  console.log('=========================\n');
 
-    this.logger.log(`Found ${availableDrivers.length} available drivers for ride ${rideId}`);
+  // Recherche chauffeurs (pour l'instant pas de filtrage géographique strict)
+  const availableDrivers = await this.prisma.driverProfile.findMany({
+    where: {
+      status: DriverStatus.APPROVED,
+      activityStatus: DriverActivityStatus.ONLINE,
+      vehicles: {
+        some: {
+          status: VehicleStatus.AVAILABLE,
+          verified: true,
+          capacity: { gte: ride.passengerCount },
+        },
+      },
+    },
+    include: {
+      user: { select: { id: true, firstName: true, lastName: true, phone: true } },
+      vehicles: {
+        where: {
+          status: VehicleStatus.AVAILABLE,
+          verified: true,
+        },
+      },
+    },
+    take: 10,
+  });
 
-    // Notifier chaque chauffeur disponible de la nouvelle course
-    for (const driver of availableDrivers.slice(0, 5)) { // Limiter à 5 chauffeurs
-      // Calculer la distance de manière sécurisée
-      const distance = (ride.pickupLatitude && ride.pickupLongitude && ride.destinationLatitude && ride.destinationLongitude) 
+console.log(' Chauffeurs disponibles après filtres:', availableDrivers.length);
+  console.log(' Filtres appliqués:');
+  console.log(`  - status: ${DriverStatus.APPROVED}`);
+  console.log(`  - activityStatus: ${DriverActivityStatus.ONLINE}`);
+  console.log(`  - vehicle.status: ${VehicleStatus.AVAILABLE}`);
+  console.log(`  - vehicle.verified: true`);
+  console.log(`  - vehicle.capacity >= ${ride.passengerCount}`);
+
+  this.logger.log(
+    `Found ${availableDrivers.length} available drivers for ride ${rideId}`,
+  );
+
+  // Notifier chaque chauffeur disponible (notifications "classiques")
+  for (const driver of availableDrivers.slice(0, 5)) {
+    // Calculer la distance de manière sécurisée
+    const distance =
+      ride.pickupLatitude &&
+      ride.pickupLongitude &&
+      ride.destinationLatitude &&
+      ride.destinationLongitude
         ? this.calculateDistance(
             ride.pickupLatitude,
             ride.pickupLongitude,
             ride.destinationLatitude,
-            ride.destinationLongitude
+            ride.destinationLongitude,
           ).toFixed(1)
         : 'Non calculée';
 
-      await this.notificationsService.sendNotification({
-        type: NotificationType.RIDE_REQUEST,
-        userId: driver.user.id,
-        variables: {
-          message: `Nouvelle course disponible`,
-          clientName: `${ride.client.user.firstName} ${ride.client.user.lastName}`,
-          pickup: ride.pickupAddress,
-          destination: ride.destinationAddress,
-          distance: `${distance} km`,
-          estimatedFare: `${ride.totalFare} FCFA`,
-          details: `Course de ${ride.pickupAddress} vers ${ride.destinationAddress}`
-        },
-        metadata: { 
-          rideId: ride.id,
-          clientId: ride.clientId 
-        }
-      });
-    }
-
-    // Émettre un événement pour d'autres processus (notifications push, etc.)
-    this.eventEmitter.emit('ride.requested', { 
-      rideId, 
-      availableDrivers,
-      clientName: `${ride.client.user.firstName} ${ride.client.user.lastName}`
+    await this.notificationsService.sendNotification({
+      type: NotificationType.RIDE_REQUEST,
+      userId: driver.user.id,
+      variables: {
+        message: `Nouvelle course disponible`,
+        clientName: `${ride.client.user.firstName} ${ride.client.user.lastName}`,
+        pickup: ride.pickupAddress,
+        destination: ride.destinationAddress,
+        distance: `${distance} km`,
+        estimatedFare: `${ride.totalFare} FCFA`,
+        details: `Course de ${ride.pickupAddress} vers ${ride.destinationAddress}`,
+      },
+      metadata: {
+        rideId: ride.id,
+        clientId: ride.clientId,
+      },
     });
   }
+ 
+
+
+  // construire la liste des userIds des chauffeurs ciblés (max 5)
+  const targetDriverUserIds = availableDrivers.slice(0, 5).map((d) => d.user.id);
+
+  console.log(' UserIds pour WebSocket:', targetDriverUserIds);
+  console.log(' Rooms actives avant émission:', 
+  );
+  // Émettre un événement pour WebSocket / autres processus
+
+const durationMinutes = ride.distanceKm
+  ? Math.ceil((ride.distanceKm / 30) * 60)
+  : 0;
+
+  console.log('Chauffeurs trouvés:', availableDrivers.length);
+  console.log('UserIds des chauffeurs:', targetDriverUserIds);
+
+  // ✅ Émission immédiate au lieu d'un délai de 5 secondes
+  this.logger.log('📤 Émission immédiate de ride.requested');
+
+  this.eventEmitter.emit('ride.requested', {
+    rideId: ride.id,
+    clientId: ride.clientId,
+    clientName: `${ride.client.user.firstName} ${ride.client.user.lastName}`,
+    clientPhone: ride.client.user.phone,
+    pickupAddress: ride.pickupAddress,
+    destinationAddress: ride.destinationAddress,
+    pickupLatitude: ride.pickupLatitude,
+    pickupLongitude: ride.pickupLongitude,
+    destinationLatitude: ride.destinationLatitude,
+    destinationLongitude: ride.destinationLongitude,
+    totalFare: ride.totalFare,
+    baseFare: ride.baseFare,
+    distanceKm: ride.distanceKm,
+    durationMinutes: durationMinutes,
+    passengerCount: ride.passengerCount,
+    rideType: ride.rideType,
+    notes: ride.notes,
+    status: ride.status,
+    requestedAt: ride.requestedAt,
+    driverUserIds: targetDriverUserIds,
+  });
+}
+
 
   // ===============================
   // ACCEPTER UNE COURSE
   // ===============================
-  async acceptRide(userId: string, rideId: string) {
+ async acceptRide(userId: string, rideId: string) {
     this.logger.log(`Driver ${userId} accepting ride ${rideId}`);
 
     // Vérifier que l'utilisateur est DRIVER
@@ -218,10 +332,9 @@ async createRide(userId: string, createRideDto: CreateRideDto) {
       throw new ForbiddenException('Only approved drivers can accept rides');
     }
 
-    // Vérification explicite pour éviter l'erreur TypeScript
     const driverProfile = user.driverProfile;
     if (driverProfile.status !== DriverStatus.APPROVED) {
-       throw new ForbiddenException('Driver must be approved to accept rides');
+      throw new ForbiddenException('Driver must be approved to accept rides');
     }
 
     const availableVehicle = driverProfile.vehicles[0];
@@ -247,6 +360,20 @@ async createRide(userId: string, createRideDto: CreateRideDto) {
       throw new BadRequestException('Ride is no longer available');
     }
 
+    // ✅ NOUVEAU : Vérifier le solde du wallet AVANT d'accepter
+    const totalFare = ride.totalFare?.toNumber() || 0;
+    const canAccept = await this.walletService.canAcceptRide(driverProfile.id, totalFare);
+
+    if (!canAccept) {
+      throw new BadRequestException(
+        `Solde insuffisant. Rechargez votre wallet de ${totalFare} FCFA pour accepter cette course.`
+      );
+    }
+
+    // ✅ NOUVEAU : Déduire le montant total IMMÉDIATEMENT
+    await this.walletService.deductRideFare(driverProfile.id, totalFare, rideId);
+    this.logger.log(`💰 ${totalFare} FCFA déduit du wallet du chauffeur ${driverProfile.id}`);
+
     // Transaction pour accepter la course
     const updatedRide = await this.prisma.$transaction(async (tx) => {
       // Marquer le véhicule comme en utilisation
@@ -255,62 +382,50 @@ async createRide(userId: string, createRideDto: CreateRideDto) {
         data: { status: VehicleStatus.IN_USE }
       });
 
-     // Vérifier que l'utilisateur a bien un profil chauffeur
-if (!user.driverProfile) {
-  throw new BadRequestException('User does not have a driver profile');
-}
+      // Mettre le chauffeur en course
+      await tx.driverProfile.update({
+        where: { id: driverProfile.id },
+        data: { activityStatus: DriverActivityStatus.ON_RIDE } 
+      });
 
-// Maintenant TypeScript sait que driverProfile n'est pas null
-return tx.ride.update({
-  where: { id: rideId },
-  data: {
-    driverId: user.driverProfile.id,
-    vehicleId: availableVehicle.id,
-    status: RideStatus.ACCEPTED,
-    acceptedAt: new Date(),
-  },
-  include: {
-    client: {
-      include: { user: true }
-    },
-    driver: {
-      include: { user: true }
-    },
-    vehicle: true
-  }
-});
+      // Accepter la course
+      return tx.ride.update({
+        where: { id: rideId },
+        data: {
+          driverId: driverProfile.id,
+          vehicleId: availableVehicle.id,
+          status: RideStatus.ACCEPTED,
+          acceptedAt: new Date(),
+        },
+        include: {
+          client: {
+            include: { user: true }
+          },
+          driver: {
+            include: { user: true }
+          },
+          vehicle: true
+        }
+      });
     });
+    console.log('🔍 Course acceptée, préparation émission événement');
+    console.log('🔍 clientId:', ride.client.user.id);
+    console.log('🔍 driverId:', driverProfile.id);
+    console.log('🔍 driverName:', `${user.firstName} ${user.lastName}`);
 
-    // Notifier le client que sa course a été acceptée
-    await this.notificationsService.sendNotification({
-      type: NotificationType.RIDE_ACCEPTED,
-      userId: ride.client.user.id,
-      variables: {
-        message: `Votre course a été acceptée`,
-        driverName: `${user.firstName} ${user.lastName}`,
-        driverPhone: user.phone || 'Non renseigné',
-        vehicleBrand: availableVehicle.brand,
-        vehicleModel: availableVehicle.model,
-        plateNumber: availableVehicle.plateNumber,
-        estimatedArrival: '5-10 minutes',
-        details: `${user.firstName} ${user.lastName} arrive dans 5-10 minutes avec ${availableVehicle.brand} ${availableVehicle.model} (${availableVehicle.plateNumber})`
-      },
-      metadata: { 
-        rideId: rideId,
-        driverId: user.driverProfile!.id, // Utilisation de l'assertion non-null
-        vehicleId: availableVehicle.id
-      }
-    });
-
-    // Émettre événement
+    //  ÉMETTRE L'ÉVÉNEMENT avec toutes les données nécessaires
     this.eventEmitter.emit('ride.accepted', {
       rideId,
-      clientId: ride.clientId,
-      driverId: driverProfile.id, // Utilisation de la variable locale
-      driverName: `${user.firstName} ${user.lastName}`
+      clientId: ride.client.user.id,
+      driverId: driverProfile.id,
+      driverName: `${user.firstName} ${user.lastName}`,
+      vehiclePlate: updatedRide.vehicle?.plateNumber || 'N/A',
+      estimatedArrival: '5-10 min', // TODO: Calculer l'arrivée estimée basée sur la position
+      pickupAddress: updatedRide.pickupAddress,
+      destinationAddress: updatedRide.destinationAddress,
     });
 
-    this.logger.log(`Ride ${rideId} accepted by driver ${driverProfile.id}`);
+    this.logger.log(` Ride ${rideId} accepted by driver ${driverProfile.id}`);
     return updatedRide;
   }
 
@@ -321,44 +436,96 @@ return tx.ride.update({
   // ===============================
   // DÉMARRER UNE COURSE
   // ===============================
-  async startRide(userId: string, rideId: string) {
-    const ride = await this.validateDriverRide(userId, rideId, [RideStatus.ACCEPTED]);
+ async startRide(userId: string, rideId: string) {
+  console.log(` === DÉMARRAGE COURSE ${rideId} PAR ${userId} ===`);
+  
+  //  RÉCUPÉRER LA COURSE D'ABORD
+  const user = await this.prisma.user.findUnique({
+    where: { id: userId },
+    include: { driverProfile: true }
+  });
 
-    const updatedRide = await this.prisma.ride.update({
-      where: { id: rideId },
-      data: {
-        status: RideStatus.IN_PROGRESS,
-        startedAt: new Date(),
-      },
-      include: this.getRideInclude()
-    });
-
-    // Notifier le client que la course a commencé
-    if (ride.client) {
-      await this.notificationsService.sendNotification({
-        type: NotificationType.RIDE_STARTED,
-        userId: ride.client.user.id,
-        variables: {
-          message: `Votre course a commencé`,
-          destination: ride.destinationAddress,
-          estimatedDuration: '15-20 minutes',
-          details: `Direction ${ride.destinationAddress}. Durée estimée: 15-20 minutes`
-        },
-        metadata: { rideId }
-      });
-    }
-
-    // Émettre événement
-    this.eventEmitter.emit('ride.started', {
-      rideId,
-      clientId: ride.clientId,
-      destination: ride.destinationAddress
-    });
-
-    this.logger.log(`Ride ${rideId} started`);
-    return updatedRide;
+  if (!user?.driverProfile) {
+    throw new ForbiddenException('Profil chauffeur introuvable');
   }
 
+  const ride = await this.prisma.ride.findUnique({
+    where: { id: rideId },
+    include: {
+      driver: { include: { user: true } },
+      client: { include: { user: true } },
+      vehicle: true
+    }
+  });
+
+  if (!ride) {
+    throw new NotFoundException(`Course ${rideId} introuvable`);
+  }
+
+  console.log(` Statut actuel: ${ride.status}`);
+  console.log(` Driver assigné: ${ride.driverId}`);
+  console.log(` Driver appelant: ${user.driverProfile.id}`);
+
+  //  VÉRIFIER QUE C'EST LE BON CHAUFFEUR
+  if (ride.driverId !== user.driverProfile.id) {
+    throw new ForbiddenException('Cette course n\'est pas assignée à vous');
+  }
+
+  //  CAS 1: DÉJÀ EN COURS → RETOURNER SANS ERREUR (idempotence)
+  if (ride.status === RideStatus.IN_PROGRESS) {
+    console.log(` Course déjà démarrée, on retourne la course existante`);
+    this.logger.warn(`Ride ${rideId} already in progress`);
+    return ride;
+  }
+
+  //  CAS 2: STATUT INVALIDE → ERREUR CLAIRE
+  if (ride.status !== RideStatus.ACCEPTED) {
+    throw new BadRequestException(
+      `Cannot start ride with status: ${ride.status}. Expected status: ACCEPTED`
+    );
+  }
+
+  console.log(` Statut correct (ACCEPTED), démarrage de la course...`);
+
+  //  MISE À JOUR DU STATUT
+  const updatedRide = await this.prisma.ride.update({
+    where: { id: rideId },
+    data: {
+      status: RideStatus.IN_PROGRESS,
+      startedAt: new Date(),
+    },
+    include: this.getRideInclude()
+  });
+
+  console.log(` Course ${rideId} démarrée avec succès`);
+
+  // NOTIFIER LE CLIENT
+  if (ride.client) {
+    await this.notificationsService.sendNotification({
+      type: NotificationType.RIDE_STARTED,
+      userId: ride.client.user.id,
+      variables: {
+        message: `Votre course a commencé`,
+        destination: ride.destinationAddress,
+        estimatedDuration: `${ride.durationMinutes || 15} minutes`,
+        details: `Direction ${ride.destinationAddress}`
+      },
+      metadata: { rideId }
+    });
+  }
+
+  // ÉMETTRE ÉVÉNEMENT WEBSOCKET
+  this.eventEmitter.emit('ride.started', {
+    rideId,
+    clientId: ride.clientId,
+    driverId: ride.driverId,
+    destination: ride.destinationAddress
+  });
+
+  this.logger.log(` Ride ${rideId} started by driver ${userId}`);
+  
+  return updatedRide;
+}
   // ===============================
   // TERMINER UNE COURSE
   // ===============================
@@ -388,6 +555,13 @@ return tx.ride.update({
         });
       }
 
+      if (ride.driverId) {
+        await tx.driverProfile.update({
+            where: { id: ride.driverId },
+            data: { activityStatus: DriverActivityStatus.ONLINE } 
+        });
+    }
+
       // Mettre à jour les stats du chauffeur
       if (ride.driverId && driverEarnings) {
         await tx.driverProfile.update({
@@ -397,6 +571,22 @@ return tx.ride.update({
             totalEarnings: { increment: driverEarnings }
           }
         });
+
+        // ✅ NOUVEAU : Mettre à jour le wallet du chauffeur
+        this.logger.log(`💰 Ajout de ${driverEarnings} FCFA au wallet du chauffeur ${ride.driverId}`);
+      }
+
+      // Mettre à jour le statut de la réservation associée si elle existe
+      const associatedReservation = await tx.reservation.findFirst({
+        where: { rideId: rideId }
+      });
+
+      if (associatedReservation) {
+        await tx.reservation.update({
+          where: { id: associatedReservation.id },
+          data: { status: 'FULFILLED' }
+        });
+        this.logger.log(`✅ Réservation ${associatedReservation.id} marquée comme FULFILLED`);
       }
 
       // Terminer la course
@@ -412,6 +602,26 @@ return tx.ride.update({
         include: this.getRideInclude()
       });
     });
+
+    // ✅ NOUVEAU : Enregistrer la commission SUMO et les gains du chauffeur
+    if (ride.driverId && driverEarnings && platformFee) {
+      try {
+        const totalFare = ride.totalFare?.toNumber() || 0;
+        await this.walletService.recordRideCompletion(
+          ride.driverId,
+          totalFare,
+          platformFee,
+          driverEarnings,
+          rideId
+        );
+        this.logger.log(
+          `✅ Commission ${platformFee} FCFA + Gains ${driverEarnings} FCFA enregistrés pour le chauffeur ${ride.driverId}`
+        );
+      } catch (error) {
+        this.logger.error(`❌ Erreur enregistrement wallet: ${error.message}`);
+        // Ne pas bloquer la complétion de la course si le wallet échoue
+      }
+    }
 
     // Notifier le client et le chauffeur de la fin de course
     if (ride.client) {
@@ -475,104 +685,231 @@ return tx.ride.update({
   // ===============================
   // ANNULER UNE COURSE
   // ===============================
-  async cancelRide(userId: string, rideId: string, cancelDto: CancelRideDto) {
-    // Vérifier les droits d'annulation
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: { clientProfile: true, driverProfile: true }
-    });
+  // ===============================
+// ANNULER UNE COURSE (async cancelRide)
+// ===============================
+// async cancelRide(userId: string, rideId: string, cancelDto: CancelRideDto) {
+//     // Vérifier les droits d'annulation
+//     const user = await this.prisma.user.findUnique({
+//       where: { id: userId },
+//       include: { clientProfile: true, driverProfile: true }
+//     });
 
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
+//     if (!user) {
+//       throw new NotFoundException('User not found');
+//     }
 
-    const ride = await this.prisma.ride.findUnique({
+//     // Récupérer la course. L'inclusion du driver.user est nécessaire pour la notification.
+//     // L'assertion 'as any' est utilisée car le modèle 'driver' est le DriverProfile.
+//     const ride = (await this.prisma.ride.findUnique({
+//         where: { id: rideId },
+//         include: { 
+//             client: { include: { user: true } },
+//             driver: { 
+//                 include: { 
+//                     user: true, // Inclusion nécessaire pour les notifications
+//                 } 
+//             }
+//         }
+//     })) as any; 
+
+//     if (!ride) {
+//       throw new NotFoundException('Ride not found');
+//     }
+
+//     // Vérifier que l'utilisateur a le droit d'annuler
+//     const canCancel = 
+//       (user.role === UserRole.CLIENT && user.clientProfile && ride.clientId === user.clientProfile.id) ||
+//       (user.role === UserRole.DRIVER && user.driverProfile && ride.driverId === user.driverProfile.id) ||
+//       user.role === UserRole.ADMIN;
+
+//     if (!canCancel) {
+//       throw new ForbiddenException('You cannot cancel this ride');
+//     }
+
+//     // Vérifier que la course peut être annulée
+//     if ([RideStatus.COMPLETED, RideStatus.CANCELED].includes(ride.status)) {
+//         throw new BadRequestException('Cannot cancel a completed or already canceled ride');
+//     }
+
+//     // Transaction d'annulation
+//     const canceledRide = await this.prisma.$transaction(async (tx) => {
+//       // Libérer le véhicule si un chauffeur était assigné
+//       if (ride.vehicleId) {
+//         await tx.vehicle.update({
+//           where: { id: ride.vehicleId },
+//           data: { status: VehicleStatus.AVAILABLE }
+//         });
+//       }
+
+//       // Mettre à jour le statut du chauffeur
+//       if (ride.driverId) {
+//         await tx.driverProfile.update({
+//              where: { id: ride.driverId }, 
+//              data: { activityStatus: DriverActivityStatus.ONLINE } 
+//         });
+//       }
+
+//       // Annuler la course
+//       return tx.ride.update({
+//         where: { id: rideId },
+//         data: {
+//           status: RideStatus.CANCELED,
+//           cancellationCauseId: cancelDto.cancellationCauseId,
+//           canceledBy: cancelDto.canceledBy,
+//           canceledAt: new Date(),
+//           notes: cancelDto.additionalReason 
+//             ? `${ride.notes || ''}\nAnnulation: ${cancelDto.additionalReason}`.trim()
+//             : ride.notes
+//         },
+//         include: this.getRideInclude()
+//       });
+//     });
+
+//     // Notifier l'autre partie de l'annulation
+//     // Remarque : ride.driver?.user.id fonctionne car l'inclusion driver: { include: { user: true } } est présente
+//     const recipientUserId = user.role === UserRole.CLIENT 
+//       ? ride.driver?.user.id 
+//       : ride.client.user.id;
+
+//     const canceledByText = user.role === UserRole.CLIENT ? 'le client' : 'le chauffeur';
+
+//     if (recipientUserId) {
+//       await this.notificationsService.sendNotification({
+//         type: NotificationType.RIDE_CANCELED,
+//         userId: recipientUserId,
+//         variables: {
+//           message: `Course annulée`,
+//           canceledBy: canceledByText,
+//           reason: cancelDto.additionalReason || 'Aucune raison spécifiée',
+//           pickup: ride.pickupAddress,
+//           destination: ride.destinationAddress,
+//           details: `La course de ${ride.pickupAddress} vers ${ride.destinationAddress} a été annulée par ${canceledByText}`
+//         },
+//         metadata: { rideId }
+//       });
+//     }
+
+//     // Émettre événement
+//     this.eventEmitter.emit('ride.canceled', {
+//       rideId,
+//       canceledBy: canceledByText,
+//       reason: cancelDto.additionalReason
+//     });
+
+//     this.logger.log(`Ride ${rideId} canceled by ${cancelDto.canceledBy}`);
+//     return canceledRide;
+// }
+
+
+// src/modules/rides/rides.service.ts
+
+// src/modules/rides/rides.service.ts
+
+async cancelRide(
+  rideId: string,
+  cancelData: {
+    cancellationCauseId?: string;
+    canceledBy: string;
+    additionalReason?: string;
+  }
+) {
+  this.logger.log(`🚫 Tentative d'annulation de la course ${rideId} par ${cancelData.canceledBy}`);
+
+  return this.prisma.$transaction(async (tx) => {
+    // Récupérer la course
+    const ride = await tx.ride.findUnique({
       where: { id: rideId },
-      include: { 
+      include: {
         client: { include: { user: true } },
-        driver: { include: { user: true } }
-      }
+        driver: { include: { user: true } },
+        vehicle: true,
+      },
     });
 
     if (!ride) {
-      throw new NotFoundException('Ride not found');
+      this.logger.error(`❌ Course ${rideId} non trouvée`);
+      throw new BadRequestException('Course non trouvée');
     }
 
-    // Vérifier que l'utilisateur a le droit d'annuler
-    const canCancel = 
-      (user.role === UserRole.CLIENT && user.clientProfile && ride.clientId === user.clientProfile.id) ||
-      (user.role === UserRole.DRIVER && user.driverProfile && ride.driverId === user.driverProfile.id) ||
-      user.role === UserRole.ADMIN;
+    this.logger.log(`📊 Statut actuel de la course: ${ride.status}`);
 
-    if (!canCancel) {
-      throw new ForbiddenException('You cannot cancel this ride');
+    // ✅ Autoriser l'annulation pour REQUESTED et ACCEPTED
+    if (!['REQUESTED', 'ACCEPTED'].includes(ride.status)) {
+      this.logger.error(`❌ Impossible d'annuler, statut: ${ride.status}`);
+      throw new BadRequestException(
+        `Impossible d'annuler une course avec le statut ${ride.status}`
+      );
     }
 
-    // Vérifier que la course peut être annulée
-    
-    if (['COMPLETED', 'CANCELED'].includes(ride.status)) {
-  throw new BadRequestException('Cannot cancel a completed or already canceled ride');
-}
+    // Préparer les données de mise à jour
+    const updateData: any = {
+      status: 'CANCELED',
+      canceledAt: new Date(),
+      canceledBy: cancelData.canceledBy,
+    };
 
-    // Transaction d'annulation
-    const canceledRide = await this.prisma.$transaction(async (tx) => {
-      // Libérer le véhicule si un chauffeur était assigné
+    // ✅ Vérifier si la cause existe
+    if (cancelData.cancellationCauseId) {
+      const causeExists = await tx.cancellationCause.findUnique({
+        where: { id: cancelData.cancellationCauseId },
+      });
+
+      if (causeExists) {
+        updateData.cancellationCauseId = cancelData.cancellationCauseId;
+        this.logger.log(`✅ Cause d'annulation trouvée: ${cancelData.cancellationCauseId}`);
+      } else {
+        this.logger.warn(`⚠️ Cause d'annulation introuvable: ${cancelData.cancellationCauseId}`);
+        // On continue quand même sans la cause
+      }
+    }
+
+    // Si le chauffeur avait accepté, libérer ses ressources
+    if (ride.status === 'ACCEPTED' && ride.driverId) {
+      this.logger.log(`🔓 Libération des ressources du chauffeur ${ride.driverId}`);
+
+      // Libérer le véhicule
       if (ride.vehicleId) {
         await tx.vehicle.update({
           where: { id: ride.vehicleId },
-          data: { status: VehicleStatus.AVAILABLE }
+          data: { status: 'AVAILABLE' },
         });
+        this.logger.log(`✅ Véhicule ${ride.vehicleId} libéré`);
       }
 
-      // Annuler la course
-      return tx.ride.update({
-        where: { id: rideId },
-        data: {
-          status: RideStatus.CANCELED,
-          cancellationCauseId: cancelDto.cancellationCauseId,
-          canceledBy: cancelDto.canceledBy,
-          canceledAt: new Date(),
-          notes: cancelDto.additionalReason 
-            ? `${ride.notes || ''}\nAnnulation: ${cancelDto.additionalReason}`.trim()
-            : ride.notes
-        },
-        include: this.getRideInclude()
+      // Remettre le chauffeur en ligne
+      await tx.driverProfile.update({
+        where: { id: ride.driverId },
+        data: { activityStatus: 'ONLINE' },
       });
-    });
-
-    // Notifier l'autre partie de l'annulation
-    const recipientUserId = user.role === UserRole.CLIENT 
-      ? ride.driver?.user.id 
-      : ride.client.user.id;
-
-    const canceledByText = user.role === UserRole.CLIENT ? 'le client' : 'le chauffeur';
-
-    if (recipientUserId) {
-      await this.notificationsService.sendNotification({
-        type: NotificationType.RIDE_CANCELED,
-        userId: recipientUserId,
-        variables: {
-          message: `Course annulée`,
-          canceledBy: canceledByText,
-          reason: cancelDto.additionalReason || 'Aucune raison spécifiée',
-          pickup: ride.pickupAddress,
-          destination: ride.destinationAddress,
-          details: `La course de ${ride.pickupAddress} vers ${ride.destinationAddress} a été annulée par ${canceledByText}`
-        },
-        metadata: { rideId }
-      });
+      this.logger.log(`✅ Chauffeur ${ride.driverId} remis en ligne`);
     }
 
-    // Émettre événement
-    this.eventEmitter.emit('ride.canceled', {
-      rideId,
-      canceledBy: canceledByText,
-      reason: cancelDto.additionalReason
+    // Annuler la course
+    const updatedRide = await tx.ride.update({
+      where: { id: rideId },
+      data: updateData,
+      include: {
+        client: { include: { user: true } },
+        driver: { include: { user: true } },
+        vehicle: true,
+      },
     });
 
-    this.logger.log(`Ride ${rideId} canceled by ${cancelDto.canceledBy}`);
-    return canceledRide;
-  }
+    this.logger.log(`✅ Course ${rideId} annulée avec succès`);
+
+    // Émettre l'événement WebSocket
+    this.notificationsGateway.notifyRideCanceled({
+      rideId: updatedRide.id,
+      canceledBy: cancelData.canceledBy,
+      reason: cancelData.additionalReason || 'Annulation',
+      clientId: updatedRide.client?.user?.id,
+      driverId: updatedRide.driver?.user?.id,
+    });
+
+    return updatedRide;
+  });
+}
 
   // ===============================
   // NOTATION D'UNE COURSE

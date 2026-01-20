@@ -5,7 +5,8 @@ import { CreatePaymentDto } from './dto/create-payment.dto';
 import { RefundPaymentDto } from './dto/refund-payment.dto';
 import { PaymentFilterDto } from './dto/payment-filter.dto';
 import { PaymentStatus, UserRole, Prisma, ReservationStatus, RideStatus } from '@prisma/client';
-import { Decimal } from '@prisma/client/runtime/library';
+import Decimal from 'decimal.js';
+
 
 @Injectable()
 export class PaymentsService {

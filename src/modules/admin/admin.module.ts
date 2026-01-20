@@ -15,16 +15,21 @@ import { ReportsController } from './controllers/reports.controller';
 import { AdminLogsController } from './controllers/admin-logs.controller';
 import { AutoApprovalService } from './services/auto-approval.service';
 import { ApprovalController } from './controllers/approval.controller';
+import { EmailModule } from '../email/email.module';
+import { DocumentsModule } from 'src/documents/documents.module';
+
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, EmailModule,DocumentsModule,
+    ],
   providers: [
     DashboardService,
     UserManagementService,
     SystemConfigService,
     ReportsService,
     AdminLogService,
-    AutoApprovalService
+    AutoApprovalService,
+    
   ],
   controllers: [
     DashboardController,

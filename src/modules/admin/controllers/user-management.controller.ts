@@ -22,7 +22,7 @@ export class UserManagementController {
   @ApiQuery({ name: 'limit', required: false, example: 20 })
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'role', required: false, enum: ['CLIENT', 'DRIVER', 'ADMIN'] })
-  @ApiQuery({ name: 'status', required: false, enum: ['active', 'inactive'] })
+  @ApiQuery({ name: 'status', required: false, enum: ['active', 'inactive', 'pending'] })
   getAllUsers(
     @Query('page') page?: string,
     @Query('limit') limit?: string,
@@ -36,6 +36,21 @@ export class UserManagementController {
       search,
       role,
       status,
+    );
+  }
+
+  //  NOUVEAU ENDPOINT : Chauffeurs en attente uniquement
+  @Get('drivers/pending')
+  @ApiOperation({ summary: 'Liste des chauffeurs en attente d\'approbation' })
+  @ApiQuery({ name: 'page', required: false, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, example: 20 })
+  getPendingDrivers(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.userManagementService.getPendingDrivers(
+      page ? parseInt(page) : 1,
+      limit ? parseInt(limit) : 20,
     );
   }
 

@@ -1,36 +1,53 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CarpoolPricingService } from './services/carpool-pricing.service';
 import { RouteCalculationService } from './services/route-calculation.service';
+import { WalletService } from '../wallet/wallet.service';
+import { NotificationsService } from '../notifications/services/notifications.service';
 import { CreateCarpoolReservationDto } from './dto/create-carpool-reservation.dto';
 import { SearchCarpoolDto } from './dto/search-carpool.dto';
 import { JoinCarpoolDto } from './dto/join-carpool.dto';
-import { Decimal } from '@prisma/client/runtime/library';
+import { Prisma, NotificationType } from '@prisma/client';
+
+import Decimal from 'decimal.js';
 
 @Injectable()
 export class CarpoolService {
+  private readonly logger = new Logger(CarpoolService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly pricingService: CarpoolPricingService,
     private readonly routeService: RouteCalculationService,
+    private readonly walletService: WalletService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
-  async createCarpoolReservation(dto: CreateCarpoolReservationDto, clientId: string) {
-    // 1. Vérifier que l'utilisateur existe et a le bon rôle
+  async createCarpoolReservation(dto: CreateCarpoolReservationDto, userId: string) {
+    // 1. Vérifier que l'utilisateur existe
     const user = await this.prisma.user.findUnique({
-      where: { id: clientId },
-      include: { clientProfile: true }
+      where: { id: userId },
+      include: {
+        clientProfile: true,
+        driverProfile: true
+      }
     });
 
     if (!user) {
       throw new BadRequestException('Utilisateur introuvable');
     }
 
-    if (user.role !== 'CLIENT') {
-      throw new BadRequestException('Seuls les clients peuvent créer des réservations');
+    // 2. SEULS LES CHAUFFEURS peuvent créer des covoiturages
+    if (user.role !== 'DRIVER') {
+      throw new BadRequestException('Seuls les chauffeurs peuvent créer des covoiturages. Les clients peuvent rejoindre un covoiturage existant.');
     }
 
-    // 2. Créer le profil client s'il n'existe pas
+    // 3. Vérifier que le chauffeur est approuvé
+    if (!user.driverProfile || user.driverProfile.status !== 'APPROVED') {
+      throw new BadRequestException('Votre profil chauffeur doit être approuvé pour créer des covoiturages');
+    }
+
+    // 4. Créer ou récupérer le profil client (pour la réservation)
     let clientProfile = user.clientProfile;
     if (!clientProfile) {
       clientProfile = await this.prisma.clientProfile.create({
@@ -39,12 +56,11 @@ export class CarpoolService {
         }
       });
     }
-    
-  console.log('=== DEBUG DÉTAILLÉ ===');
-  console.log('1. ClientId reçu:', clientId);
-  console.log('2. Type:', typeof clientId);
-  console.log('3. Longueur:', clientId?.length);
-  console.log('4. Est vide/null/undefined:', !clientId);
+
+  console.log('=== DEBUG CRÉATION COVOITURAGE ===');
+  console.log('1. UserId reçu:', userId);
+  console.log('2. Rôle:', user.role);
+  console.log('3. Profile client créé/existant:', clientProfile.id);
 
 
     // 3. Calculer route et prix (une seule fois)
@@ -53,13 +69,6 @@ export class CarpoolService {
       { lat: dto.destinationLatitude, lng: dto.destinationLongitude }
     );
 
-    // Lister TOUS les utilisateurs pour comparaison
-  const allUsers = await this.prisma.user.findMany({
-    select: { id: true, email: true, role: true }
-  });
-  console.log('5. Tous les utilisateurs en DB:', allUsers);
-
-
     const basePrice = this.pricingService.calculateBasePrice(
       routeData.distance / 1000, // km
       routeData.duration / 60     // minutes
@@ -67,11 +76,21 @@ export class CarpoolService {
 
     // 4. Calculer le prix de covoiturage si applicable
     let carpoolPricing: ReturnType<typeof this.pricingService.calculateCarpoolPricing> | null = null;
-    
+
     if (dto.isSharedRide && dto.maxSharedPassengers && dto.maxSharedPassengers > 0) {
       carpoolPricing = this.pricingService.calculateCarpoolPricing(
         basePrice,
         dto.maxSharedPassengers + 1
+      );
+    }
+
+    // ✅ NOUVEAU : Vérifier le solde du wallet AVANT de créer le covoiturage
+    const totalFare = basePrice.totalPrice;
+    const canCreate = await this.walletService.canAcceptRide(user.driverProfile.id, totalFare);
+
+    if (!canCreate) {
+      throw new BadRequestException(
+        `Solde insuffisant. Rechargez votre wallet de ${totalFare} FCFA pour créer ce covoiturage.`
       );
     }
 
@@ -88,27 +107,61 @@ export class CarpoolService {
         scheduledAt: new Date(dto.scheduledAt),
         notes: dto.notes,
         passengerCount: 1,
-        
+
         // Champs covoiturage
         isSharedRide: dto.isSharedRide || false,
         maxSharedPassengers: dto.maxSharedPassengers || 0,
         currentSharedPassengers: 0,
         sharePreference: dto.sharePreference,
         maxDetourMinutes: dto.maxDetourMinutes,
-        
+
         // Calculs financiers
         estimatedDistance: routeData.distance / 1000,
         estimatedPrice: new Decimal(carpoolPricing ? carpoolPricing.pricePerPerson : basePrice.totalPrice),
         basePrice: new Decimal(basePrice.totalPrice),
         sharedPricePerPerson: carpoolPricing ? new Decimal(carpoolPricing.pricePerPerson) : null,
         totalSavings: carpoolPricing ? new Decimal(carpoolPricing.totalSavings) : null,
-        
+
         status: 'CONFIRMED'
       },
       include: {
         client: { include: { user: true } }
       }
     });
+
+    // ✅ NOUVEAU : Déduire le montant total IMMÉDIATEMENT après la création
+    await this.walletService.deductRideFare(user.driverProfile.id, totalFare, reservation.id);
+    this.logger.log(`💰 ${totalFare} FCFA déduit du wallet du chauffeur ${user.driverProfile.id} pour covoiturage ${reservation.id}`);
+
+    // 🚗 Créer automatiquement un RIDE pour le covoiturage (le chauffeur est déjà assigné)
+    const ride = await this.prisma.ride.create({
+      data: {
+        clientId: clientProfile.id, // Le client (qui est aussi le chauffeur)
+        driverId: user.driverProfile.id, // Le chauffeur assigné
+        status: 'ACCEPTED', // Le chauffeur a déjà accepté puisqu'il crée le covoiturage
+        pickupAddress: dto.pickupAddress,
+        destinationAddress: dto.destinationAddress,
+        pickupLatitude: dto.pickupLatitude,
+        pickupLongitude: dto.pickupLongitude,
+        destinationLatitude: dto.destinationLatitude,
+        destinationLongitude: dto.destinationLongitude,
+        durationMinutes: Math.round(routeData.duration / 60),
+        distanceKm: routeData.distance / 1000,
+        totalFare: new Decimal(totalFare),
+        baseFare: new Decimal(basePrice.totalPrice),
+        acceptedAt: new Date(), // Accepté immédiatement
+        requestedAt: new Date(), // Demandé immédiatement
+      }
+    });
+    this.logger.log(`🚗 Ride ${ride.id} créé automatiquement pour le covoiturage ${reservation.id}`);
+
+    // Lier le ride à la réservation
+    await this.prisma.reservation.update({
+      where: { id: reservation.id },
+      data: { rideId: ride.id }
+    });
+    this.logger.log(`🔗 Ride ${ride.id} lié à la réservation ${reservation.id}`);
+
     // 📊 Préparer les informations de prix détaillées pour le client
 const maxPassengers = dto.maxSharedPassengers || 0;
 const totalSeats = maxPassengers + 1; // +1 pour le conducteur
@@ -145,9 +198,50 @@ const pricingInfo = {
   currentPassengers: 0
 };
 
+// 📢 Envoyer des notifications à tous les clients pour les informer du nouveau covoiturage
+if (dto.isSharedRide && maxPassengers > 0) {
+  try {
+    // Récupérer tous les clients actifs (sauf celui qui crée le covoiturage)
+    const clients = await this.prisma.clientProfile.findMany({
+      where: {
+        userId: { not: userId },
+        user: {
+          role: 'CLIENT',
+          isActive: true
+        }
+      },
+      include: {
+        user: true
+      }
+    });
+
+    this.logger.log(`📢 Envoi de notifications à ${clients.length} clients pour le nouveau covoiturage ${reservation.id}`);
+
+    // Envoyer une notification à chaque client
+    for (const client of clients) {
+      await this.notificationsService.sendNotification({
+        type: NotificationType.NEW_CARPOOL_AVAILABLE,
+        userId: client.userId,
+        variables: {
+          pickupAddress: dto.pickupAddress,
+          destinationAddress: dto.destinationAddress,
+          scheduledAt: new Date(dto.scheduledAt).toLocaleString('fr-FR'),
+          pricePerPerson: carpoolPricing?.pricePerPerson.toString() || basePrice.totalPrice.toString(),
+          availableSeats: maxPassengers.toString(),
+        },
+      });
+    }
+
+    this.logger.log(`✅ Notifications envoyées avec succès pour le covoiturage ${reservation.id}`);
+  } catch (error) {
+    this.logger.error(`❌ Erreur lors de l'envoi des notifications pour le covoiturage ${reservation.id}:`, error);
+    // Ne pas bloquer la création du covoiturage si l'envoi des notifications échoue
+  }
+}
+
 return {
   success: true,
-  message: dto.isSharedRide 
+  message: dto.isSharedRide
     ? 'Covoiturage créé avec succès ! Le prix sera ajusté selon les passagers qui rejoindront.'
     : 'Réservation créée avec succès !',
   reservation,
@@ -162,10 +256,19 @@ return {
     // 📊 Préparer les informations de prix détaillées pour le client
   }
 
-  async searchCarpool(dto: SearchCarpoolDto) {
+  async searchCarpool(dto: SearchCarpoolDto, userId: string) {
     const timeBuffer = 30; // +/- 30 minutes
     const searchTime = new Date(dto.scheduledAt);
     const radiusKm = dto.radiusKm || 5.0;
+
+    // Récupérer le profil client du chercheur
+    const clientProfile = await this.prisma.clientProfile.findUnique({
+      where: { userId },
+    });
+
+    if (!clientProfile) {
+      throw new Error('Profil client non trouvé');
+    }
 
     const availableRides = await this.prisma.reservation.findMany({
       where: {
@@ -174,6 +277,10 @@ return {
           lt: this.prisma.reservation.fields.maxSharedPassengers
         },
         status: 'CONFIRMED',
+        // ✅ Exclure les covoiturages créés par le chercheur lui-même
+        clientId: {
+          not: clientProfile.id
+        },
         scheduledAt: {
           gte: new Date(searchTime.getTime() - timeBuffer * 60 * 1000),
           lte: new Date(searchTime.getTime() + timeBuffer * 60 * 1000)
@@ -298,7 +405,11 @@ return {
     });
 
     if (!user?.clientProfile) {
-      throw new BadRequestException('Profil client introuvable');
+      // Retourner un tableau vide au lieu de lancer une erreur
+      return {
+        success: true,
+        requests: []
+      };
     }
 
     const requests = await this.prisma.carpoolRequest.findMany({
@@ -387,7 +498,7 @@ return {
     });
 
     // 2️⃣ Créer SharedPassenger avec fareShare = 0 (temporaire)
-    await this.prisma.sharedPassenger.create({
+    const sharedPassenger = await this.prisma.sharedPassenger.create({
       data: {
         reservationId: request.targetReservationId,
         passengerId: request.requesterId,
@@ -424,9 +535,72 @@ return {
       // On continue quand même, le prix sera recalculé plus tard si nécessaire
     }
 
-    return { 
-      success: true, 
-      message: 'Demande acceptée et prix recalculés selon le modèle Yango' 
+    // 5️⃣ 🚗 CRÉER UN RIDE pour le passager accepté
+    // Récupérer le ride principal du covoiturage
+    const mainReservation = await this.prisma.reservation.findUnique({
+      where: { id: request.targetReservationId },
+      include: {
+        ride: true,
+        client: {
+          include: { user: true }
+        }
+      }
+    });
+
+    // Récupérer les infos du passager
+    const passengerClient = await this.prisma.clientProfile.findUnique({
+      where: { id: request.requesterId },
+      include: { user: true }
+    });
+
+    if (mainReservation?.ride && passengerClient) {
+      this.logger.log(`🚗 Création d'un ride pour le passager ${request.requesterId}`);
+
+      // Le ride du passager partage le même chauffeur que le ride principal
+      const passengerRide = await this.prisma.ride.create({
+        data: {
+          clientId: request.requesterId, // Le passager devient le client de ce ride
+          driverId: mainReservation.ride.driverId, // Même chauffeur
+          status: 'ACCEPTED',
+          pickupAddress: request.pickupAddress,
+          destinationAddress: request.destinationAddress,
+          pickupLatitude: request.pickupLatitude,
+          pickupLongitude: request.pickupLongitude,
+          destinationLatitude: request.destLatitude,
+          destinationLongitude: request.destLongitude,
+          totalFare: sharedPassenger.fareShare, // Le prix partagé
+          baseFare: sharedPassenger.fareShare,
+          acceptedAt: new Date(),
+          requestedAt: new Date(),
+        }
+      });
+
+      this.logger.log(`✅ Ride ${passengerRide.id} créé pour le passager du covoiturage`);
+
+      // 6️⃣ 📢 Envoyer une notification au passager
+      try {
+        await this.notificationsService.sendNotification({
+          type: NotificationType.RIDE_ACCEPTED,
+          userId: passengerClient.userId,
+          variables: {
+            driverName: `${mainReservation.client.user.firstName} ${mainReservation.client.user.lastName}`,
+            pickupAddress: request.pickupAddress,
+            destinationAddress: request.destinationAddress,
+            fare: sharedPassenger.fareShare.toString(),
+            rideId: passengerRide.id,
+          }
+        });
+        this.logger.log(`📢 Notification envoyée au passager ${passengerClient.userId}`);
+      } catch (error) {
+        this.logger.error(`❌ Erreur envoi notification au passager:`, error);
+      }
+    } else {
+      this.logger.warn(`⚠️ Pas de ride principal trouvé pour créer le ride passager`);
+    }
+
+    return {
+      success: true,
+      message: 'Demande acceptée et prix recalculés selon le modèle Yango'
     };
 
   } else {
@@ -591,10 +765,10 @@ return {
         }
       });
 
-      console.log(`✅ ${share.passengerId}: ${share.fareShare} FCFA (${share.percentageOfTrip * 100}% du trajet)`);
+      console.log(` ${share.passengerId}: ${share.fareShare} FCFA (${share.percentageOfTrip * 100}% du trajet)`);
     }
 
-    // 6️⃣ Mettre à jour le prix par personne moyen dans la réservation
+    // 6️Mettre à jour le prix par personne moyen dans la réservation
     const avgPricePerPerson = Math.round(
       priceCalculation.passengerShares.reduce((sum, p) => sum + p.fareShare, 0) / 
       priceCalculation.passengerShares.length
@@ -607,14 +781,14 @@ return {
       }
     });
 
-    console.log('✅ Prix recalculés avec succès !');
+    console.log(' Prix recalculés avec succès !');
   }
 
   /**
-   * 📊 Obtenir le résumé détaillé des prix d'un covoiturage
+   * Obtenir le résumé détaillé des prix d'un covoiturage
    */
  /**
- * 📊 Obtenir le résumé détaillé des prix d'un covoiturage
+ * Obtenir le résumé détaillé des prix d'un covoiturage
  * Accessible par : Conducteur (voit tout) + Passagers (voient leur prix)
  */
 async getCarpoolPricingSummary(reservationId: string, requestingUserId: string) {
@@ -648,7 +822,7 @@ async getCarpoolPricingSummary(reservationId: string, requestingUserId: string) 
   const totalCollected = passengers.reduce((sum, p) => sum + Number(p.fareShare), 0);
   const basePriceTotal = Number(reservation.basePrice);
 
-  // ✅ NOUVEAU : Calculer les revenus du conducteur
+  // NOUVEAU : Calculer les revenus du conducteur
   const earnings = this.pricingService.calculateDriverEarnings(totalCollected);
 
   // Vue CONDUCTEUR
@@ -671,7 +845,7 @@ async getCarpoolPricingSummary(reservationId: string, requestingUserId: string) 
       pricing: {
         basePriceTotal,
         
-        // ✅ NOUVEAU : Détail financier complet
+        //  NOUVEAU : Détail financier complet
         totalCollected: earnings.totalCollected,
         platformFee: earnings.platformFee,
         platformCommissionRate: `${earnings.commissionRate * 100}%`,
@@ -691,7 +865,7 @@ async getCarpoolPricingSummary(reservationId: string, requestingUserId: string) 
           pickupOrder: p.pickupOrder
         })),
         
-        // ✅ Message explicatif amélioré
+        //  Message explicatif amélioré
         message: passengers.length === 0 
           ? `Aucun passager pour le moment. En attente...`
           : `Vous collecterez ${earnings.totalCollected} FCFA auprès de ${passengers.length} passager(s). Commission plateforme: ${earnings.platformFee} FCFA (${earnings.commissionRate * 100}%). Vos gains nets: ${earnings.driverEarnings} FCFA.`
@@ -757,7 +931,7 @@ async getMyCurrentPrice(reservationId: string, userId: string) {
   const passengers = reservation.sharedPassengers;
   const basePriceTotal = Number(reservation.basePrice);
 
-  // 🚗 Si c'est le CONDUCTEUR
+  //  Si c'est le CONDUCTEUR
   if (isDriver) {
     const totalCollected = passengers.reduce((sum, p) => sum + Number(p.fareShare), 0);
     
@@ -789,7 +963,7 @@ async getMyCurrentPrice(reservationId: string, userId: string) {
     };
   }
 
-  // 👤 Si c'est un PASSAGER
+  //  Si c'est un PASSAGER
   const passengerData = passengers.find(p => p.passenger.userId === userId);
   
   if (!passengerData) {
@@ -804,10 +978,154 @@ async getMyCurrentPrice(reservationId: string, userId: string) {
       myFareShare: Number(passengerData.fareShare),
       paymentStatus: passengerData.paymentStatus,
       tripDistance: `${passengerData.pickupAddress} → ${passengerData.destinationAddress}`,
-      
+
       // Message
       message: `Votre part : ${Number(passengerData.fareShare)} FCFA pour ce trajet partagé.`
     }
   };
+}
+
+/**
+ * Récupérer les rides des passagers d'un covoiturage
+ */
+async getCarpoolPassengerRides(reservationId: string) {
+  const reservation = await this.prisma.reservation.findUnique({
+    where: { id: reservationId },
+    include: {
+      sharedPassengers: {
+        include: {
+          passenger: {
+            include: { user: true }
+          }
+        }
+      }
+    }
+  });
+
+  if (!reservation) {
+    throw new NotFoundException('Covoiturage non trouvé');
+  }
+
+  // Récupérer tous les rides des passagers
+  const passengerIds = reservation.sharedPassengers.map(p => p.passengerId);
+
+  const rides = await this.prisma.ride.findMany({
+    where: {
+      clientId: { in: passengerIds },
+      status: { in: ['ACCEPTED', 'IN_PROGRESS'] }
+    },
+    include: {
+      client: {
+        include: { user: true }
+      }
+    },
+    orderBy: {
+      createdAt: 'asc' // Premier arrivé, premier servi
+    }
+  });
+
+  return rides.map(ride => ({
+    rideId: ride.id,
+    passengerId: ride.clientId,
+    passengerName: `${ride.client.user.firstName} ${ride.client.user.lastName}`,
+    passengerPhone: ride.client.user.phone,
+    pickupAddress: ride.pickupAddress,
+    pickupLatitude: ride.pickupLatitude,
+    pickupLongitude: ride.pickupLongitude,
+    destinationAddress: ride.destinationAddress,
+    status: ride.status,
+  }));
+}
+
+/**
+ * Obtenir les covoiturages actifs du chauffeur
+ */
+async getDriverActiveCarpools(driverId: string) {
+  // Récupérer le profil du chauffeur pour trouver ses réservations
+  const driver = await this.prisma.driverProfile.findUnique({
+    where: { id: driverId },
+    select: { userId: true }
+  });
+
+  if (!driver) {
+    return [];
+  }
+
+  // Trouver toutes les réservations de covoiturage créées par le chauffeur OU assignées à lui
+  const reservations = await this.prisma.reservation.findMany({
+    where: {
+      isSharedRide: true,
+      status: {
+        in: ['CONFIRMED'] // Statuts valides de ReservationStatus
+      },
+      
+        // Covoiturages où il a une ride assignée
+       
+    
+    },
+    include: {
+      ride: true,
+      sharedPassengers: {
+        where: {
+          status: 'CONFIRMED'
+        },
+        include: {
+          passenger: {
+            include: {
+              user: true
+            }
+          }
+        }
+      },
+      client: {
+        include: {
+          user: true
+        }
+      }
+    }
+  });
+
+  const activeCarpools = reservations.map(reservation => {
+    // Calculer les gains à partir des passagers confirmés
+    const totalEarnings = (reservation.sharedPassengers || []).reduce(
+      (sum, p) => sum + Number(p.fareShare),
+      0
+    );
+
+    return {
+      id: reservation.id,
+      pickupAddress: reservation.pickupAddress,
+      destinationAddress: reservation.destinationAddress,
+      pickupLatitude: reservation.pickupLatitude,
+      pickupLongitude: reservation.pickupLongitude,
+      destinationLatitude: reservation.destinationLatitude,
+      destinationLongitude: reservation.destinationLongitude,
+      scheduledTime: reservation.scheduledAt,
+      maxPassengers: reservation.maxSharedPassengers,
+      confirmedPassengers: (reservation.sharedPassengers || []).map(p => ({
+        id: p.id,
+        pickupAddress: p.pickupAddress,
+        destinationAddress: p.destinationAddress,
+        pickupLatitude: p.pickupLatitude,
+        pickupLongitude: p.pickupLongitude,
+        destinationLatitude: p.destLatitude,
+        destinationLongitude: p.destLongitude,
+        fareShare: Number(p.fareShare),
+        status: p.status,
+        passenger: {
+          user: {
+            firstName: p.passenger.user.firstName,
+            lastName: p.passenger.user.lastName,
+            phone: p.passenger.user.phone
+          }
+        }
+      })),
+      totalEarnings: Math.round(totalEarnings * 0.85), // 85% pour le chauffeur
+      status: reservation.status,
+      rideStatus: reservation.ride?.status || null
+    };
+  });
+
+  return activeCarpools;
 }
 }

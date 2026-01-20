@@ -14,6 +14,12 @@
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
+    "studio": "prisma studio --url=\"postgresql://postgres:postgres@localhost:5432/mobility_db\"",
+    "migrate": "prisma migrate dev",
+    "migrate:create": "prisma migrate dev --url=\"postgresql://postgres:postgres@localhost:5432/mobility_db\" --name",
+    "generate": "prisma generate",
+    "db:push": "prisma db push --url=\"postgresql://postgres:postgres@localhost:5432/mobility_db\"",
+    "db:pull": "prisma db pull --url=\"postgresql://postgres:postgres@localhost:5432/mobility_db\"",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
@@ -34,13 +40,15 @@
     "@nestjs/swagger": "^11.2.0",
     "@nestjs/throttler": "^6.4.0",
     "@nestjs/websockets": "^11.1.6",
-    "@prisma/client": "^6.14.0",
+    "@prisma/adapter-pg": "^7.0.1",
+    "@prisma/client": "^6.0.0",
     "bcrypt": "^6.0.0",
     "bull": "^4.16.5",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "decimal.js": "^10.6.0",
     "eventemitter2": "^6.4.9",
+    "expo-server-sdk": "^4.0.0",
     "firebase-admin": "^13.4.0",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
@@ -48,6 +56,8 @@
     "nodemailer": "^7.0.6",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
+    "pg": "^8.16.3",
+    "prisma": "^6.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "socket.io": "^4.8.1",
@@ -70,20 +80,20 @@
     "@types/passport-jwt": "^4.0.1",
     "@types/socket.io": "^3.0.1",
     "@types/supertest": "^6.0.2",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",
     "globals": "^16.0.0",
     "jest": "^30.0.0",
     "prettier": "^3.4.2",
-    "prisma": "^6.14.0",
     "source-map-support": "^0.5.21",
     "supertest": "^7.0.0",
     "ts-jest": "^29.2.5",
     "ts-loader": "^9.5.2",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
-    "typescript": "^5.7.3",
+    "typescript": "^5.9.3",
     "typescript-eslint": "^8.20.0"
   },
   "jest": {
@@ -102,10 +112,8 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
-  }
-  ,
+  },
   "prisma": {
-    "seed": "ts-node ./src/prisma/seed-templates.ts"
+    "seed": "ts-node prisma/seed.ts"
   }
-
 }

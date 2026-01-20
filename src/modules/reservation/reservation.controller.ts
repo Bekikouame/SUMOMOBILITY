@@ -103,13 +103,26 @@ export class ReservationsController {
   @Get('upcoming')
   @Roles(UserRole.ADMIN, UserRole.DRIVER)
   @ApiOperation({ summary: 'Récupérer les réservations à venir (pour notifications)' })
-  @ApiQuery({ name: 'hours', required: false, type: Number, description: 'Nombre d\'heures à l\'avance (défaut: 24)' })
-  @ApiResponse({ 
-    status: HttpStatus.OK, 
-    description: 'Réservations à venir récupérées' 
+  @ApiQuery({ name: 'hours', required: false, type: Number, description: 'Nombre d\'heures à l\'avance (défaut: 720 = 30 jours)' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Réservations à venir récupérées'
   })
   async getUpcoming(@Query('hours') hours?: number) {
-    return this.reservationsService.getUpcomingReservations(hours);
+    // Par défaut 30 jours pour être sûr de tout récupérer
+    const hoursToSearch = hours || 720;
+    return this.reservationsService.getUpcomingReservations(hoursToSearch);
+  }
+
+  @Get('pending')
+  @Roles(UserRole.ADMIN, UserRole.DRIVER)
+  @ApiOperation({ summary: 'Récupérer toutes les réservations en attente (sans filtre de date)' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Réservations en attente récupérées'
+  })
+  async getPendingReservations() {
+    return this.reservationsService.getPendingReservations();
   }
 
   @Get(':id')
@@ -160,16 +173,40 @@ export class ReservationsController {
   @Roles(UserRole.CLIENT, UserRole.ADMIN)
   @ApiOperation({ summary: 'Confirmer une réservation' })
   @ApiParam({ name: 'id', description: 'ID de la réservation' })
-  @ApiResponse({ 
-    status: HttpStatus.OK, 
-    description: 'Réservation confirmée' 
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Réservation confirmée'
   })
-  @ApiResponse({ 
-    status: HttpStatus.BAD_REQUEST, 
-    description: 'Confirmation impossible' 
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Confirmation impossible'
   })
   async confirm(@Param('id') id: string, @Request() req) {
     return this.reservationsService.confirm(id, req.user.sub, req.user.role);
+  }
+
+  @Patch(':id/accept')
+  @Roles(UserRole.DRIVER)
+  @ApiOperation({ summary: 'Accepter une réservation (chauffeur)' })
+  @ApiParam({ name: 'id', description: 'ID de la réservation' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Réservation acceptée avec succès'
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Réservation déjà assignée ou statut invalide'
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Seuls les chauffeurs approuvés peuvent accepter'
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Réservation introuvable'
+  })
+  async acceptReservation(@Param('id') id: string, @Request() req) {
+    return this.reservationsService.acceptReservation(id, req.user.sub);
   }
 
   @Patch(':id/cancel')

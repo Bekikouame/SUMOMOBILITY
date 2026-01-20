@@ -1,16 +1,22 @@
 // src/vehicles/vehicles.service.ts
-import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, ConflictException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateVehicleDto } from '../vehicules/dto/create-vehicle.dto';
 import { UpdateVehicleDto } from '../vehicules/dto/update-vehicle.dto';
 import { VerifyVehicleDto } from '../vehicules/dto/verify-vehicle.dto';
 import { UpdateVehicleStatusDto } from '../vehicules/dto/update-status.dto';
+import { CreateVehicleOnboardingDto } from '../vehicules/dto/create-vehicle-onboarding.dto';
 import { VehicleStatus, UserRole } from '@prisma/client';
+
 
 @Injectable()
 export class VehiclesService {
+  private readonly logger = new Logger(VehiclesService.name);
+
   constructor(private prisma: PrismaService) {}
 
+
+  
   // Créer un nouveau véhicule
   async create(driverId: string, createVehicleDto: CreateVehicleDto) {
     // Vérifier que l'utilisateur est un chauffeur
@@ -269,4 +275,117 @@ export class VehiclesService {
       }, {} as Record<string, number>)
     };
   }
+
+  // src/vehicles/vehicles.service.ts
+
+// ✅ AJOUTE CETTE MÉTHODE
+async createForOnboarding(dto: CreateVehicleOnboardingDto) {
+  // 1. Trouver le user par email
+  const user = await this.prisma.user.findUnique({
+    where: { email: dto.email }
+  });
+
+  if (!user) {
+    throw new NotFoundException('Utilisateur non trouvé');
+  }
+
+  // 2. Trouver le driverProfile
+  const driver = await this.prisma.driverProfile.findUnique({
+    where: { userId: user.id }
+  });
+
+  if (!driver) {
+    throw new NotFoundException('Profil chauffeur non trouvé');
+  }
+
+  // 3. Vérifier si un véhicule existe déjà pour ce chauffeur
+  const existingVehicle = await this.prisma.vehicle.findFirst({
+    where: { driverId: driver.id }
+  });
+
+  // Si un véhicule existe déjà, le mettre à jour au lieu de créer un nouveau
+  if (existingVehicle) {
+    // Vérifier que la nouvelle plaque n'est pas utilisée par un autre véhicule
+    if (dto.plateNumber !== existingVehicle.plateNumber) {
+      const plateExists = await this.prisma.vehicle.findUnique({
+        where: { plateNumber: dto.plateNumber }
+      });
+
+      if (plateExists) {
+        throw new ConflictException('Cette plaque d\'immatriculation est déjà utilisée par un autre véhicule');
+      }
+    }
+
+    // Mettre à jour le véhicule existant
+    const vehicle = await this.prisma.vehicle.update({
+      where: { id: existingVehicle.id },
+      data: {
+        plateNumber: dto.plateNumber,
+        brand: dto.brand,
+        model: dto.model,
+        color: dto.color,
+        year: dto.year,
+        capacity: dto.capacity || 4,
+        status: VehicleStatus.AVAILABLE,
+        verified: false
+      },
+      include: {
+        driver: {
+          include: { user: true }
+        }
+      }
+    });
+
+    this.logger.log(`✅ Véhicule ${vehicle.id} mis à jour pour le chauffeur ${driver.id}`);
+    return vehicle;
+  }
+
+  // 4. Vérifier l'unicité de la plaque pour un nouveau véhicule
+  const plateExists = await this.prisma.vehicle.findUnique({
+    where: { plateNumber: dto.plateNumber }
+  });
+
+  if (plateExists) {
+    throw new ConflictException('Cette plaque d\'immatriculation existe déjà');
+  }
+
+  // 5. Créer le véhicule
+  const vehicle = await this.prisma.vehicle.create({
+    data: {
+      plateNumber: dto.plateNumber,
+      brand: dto.brand,
+      model: dto.model,
+      color: dto.color,
+      // type: dto.type,
+      year: dto.year,
+      capacity: dto.capacity || 4,
+      driverId: driver.id,
+      status: VehicleStatus.AVAILABLE,
+      verified: false
+    },
+    include: {
+      driver: {
+        include: { user: true }
+      }
+    }
+  });
+
+  return {
+    message: 'Véhicule créé avec succès. En attente d\'approbation par l\'administrateur.',
+    vehicle
+  };
+}
+
+ async getDriverProfile(userId: string) {
+    const driver = await this.prisma.driverProfile.findUnique({
+      where: { userId }
+    });
+
+    if (!driver) {
+      throw new NotFoundException('Profil chauffeur non trouvé');
+    }
+
+    return driver;
+  }
+
 }

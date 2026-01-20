@@ -5,9 +5,11 @@ import { CarpoolPricingService } from './services/carpool-pricing.service';
 import { RouteCalculationService } from './services/route-calculation.service';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { AuthModule } from '../../auth/auth.module';
+import { WalletModule } from '../wallet/wallet.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule],
+  imports: [PrismaModule, AuthModule, WalletModule, NotificationsModule],
   controllers: [CarpoolController],
   providers: [
     CarpoolService,

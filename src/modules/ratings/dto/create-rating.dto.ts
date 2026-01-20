@@ -1,9 +1,9 @@
-import { IsInt, Min, Max, IsString, IsOptional, IsUUID, Length } from 'class-validator';
+import { IsInt, Min, Max, IsString, IsOptional, Length } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateRatingDto {
-  @ApiProperty({ example: 'ride-123', description: 'ID de la course' })
-  @IsUUID()
+  @ApiProperty({ example: 'cmkdfe5s1000tobxwk4hdpuzy', description: 'ID de la course' })
+  @IsString()
   rideId: string;
 
   @ApiProperty({ example: 5, description: 'Note globale (1-5 étoiles)' })

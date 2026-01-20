@@ -16,6 +16,8 @@ import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {CreateVehicleOnboardingDto } from '../vehicules/dto/create-vehicle-onboarding.dto'
+
 
 @ApiTags('Vehicles')
 @Controller('vehicles')
@@ -26,6 +28,15 @@ export class VehiclesController {
     private readonly vehiclesService: VehiclesService,
     private readonly prisma: PrismaService
   ) {}
+  
+
+// ✅ AJOUTER AVANT @Post() (important pour l'ordre)
+@Post('onboarding')
+@ApiOperation({ summary: 'Créer véhicule lors inscription (sans auth)' })
+@ApiResponse({ status: 201, description: 'Véhicule créé' })
+async createForOnboarding(@Body() dto: CreateVehicleOnboardingDto) {
+  return this.vehiclesService.createForOnboarding(dto);
+}
 
   @Post()
   @UseGuards(RolesGuard)

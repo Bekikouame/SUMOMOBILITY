@@ -69,7 +69,7 @@ export class NotificationsService implements INotificationService {
       this.logger.log(` Notification ${type} envoyée à ${userId} sur ${targetChannels.length} canaux`);
 
     } catch (error) {
-      this.logger.error(` Erreur envoi notification: ${error.message}`);
+      this.logger.log(` Erreur envoi notification: ${error.message}`);
       throw error;
     }
   }
@@ -149,6 +149,37 @@ export class NotificationsService implements INotificationService {
   }
 
   /**
+   * Compte les notifications non lues d'un utilisateur
+   */
+  async getUnreadCount(userId: string): Promise<number> {
+    return await this.prisma.notification.count({
+      where: {
+        userId,
+        status: { not: NotificationStatus.READ },
+        channel: NotificationChannel.IN_APP
+      }
+    });
+  }
+
+  /**
+   * Marque toutes les notifications comme lues
+   */
+  async markAllAsRead(userId: string): Promise<void> {
+    await this.prisma.notification.updateMany({
+      where: {
+        userId,
+        status: { not: NotificationStatus.READ }
+      },
+      data: {
+        status: NotificationStatus.READ,
+        readAt: new Date()
+      }
+    });
+
+    this.logger.log(`✅ Toutes les notifications de ${userId} marquées comme lues`);
+  }
+
+  /**
    * Relance les notifications échouées
    */
   async retryFailedNotifications(): Promise<void> {
@@ -165,7 +196,7 @@ export class NotificationsService implements INotificationService {
       take: 50 // Limiter pour éviter surcharge
     });
 
-    this.logger.log(`🔄 Retry de ${failedNotifications.length} notifications échouées`);
+    this.logger.log(` Retry de ${failedNotifications.length} notifications échouées`);
 
     for (const notification of failedNotifications) {
       await this.retryNotification(notification);
@@ -244,7 +275,7 @@ export class NotificationsService implements INotificationService {
       }
 
     } catch (error) {
-      this.logger.error(`Erreur création notification ${type}/${channel}: ${error.message}`);
+      this.logger.log(`Erreur création notification ${type}/${channel}: ${error.message}`);
       throw error;
     }
   }

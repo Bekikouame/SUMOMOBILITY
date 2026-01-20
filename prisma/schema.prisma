@@ -2,7 +2,7 @@
 
 generator client {
   provider = "prisma-client-js"
-  // output   = "../generated/prisma"
+  
 }
 
 datasource db {
@@ -41,6 +41,12 @@ enum ReservationStatus {
   FULFILLED  // Accomplie avec succès
 }
 
+enum DriverActivityStatus {
+  ONLINE    // Chauffeur prêt à accepter des courses
+  OFFLINE   // Chauffeur non disponible (par défaut ou déconnexion manuelle)
+  ON_RIDE   // Chauffeur en cours de course (mis à jour automatiquement)
+}
+
 enum RideStatus {
   REQUESTED    // Demandée par le client
   ACCEPTED     // Acceptée par un chauffeur
@@ -77,6 +83,8 @@ enum NotificationType {
   RIDE_STARTED        // Course commencée
   RIDE_COMPLETED      // Course terminée
   RIDE_CANCELED       // Course annulée
+  NEW_RESERVATION     // Nouvelle réservation disponible (pour chauffeurs)
+  RESERVATION_CONFIRMED // Réservation confirmée (chauffeur a accepté)
   RESERVATION_REMINDER // Rappel réservation
   DOCUMENT_EXPIRED     // Document expiré
   DOCUMENT_APPROVED    // Document approuvé
@@ -85,6 +93,7 @@ enum NotificationType {
   PAYMENT_FAILED       // Paiement échoué
   DRIVER_APPROVED      // Chauffeur approuvé
   SYSTEM_MAINTENANCE   // Maintenance système
+  NEW_CARPOOL_AVAILABLE     // Nouveau covoiturage disponible (pour clients)
   CARPOOL_REQUEST_RECEIVED  // Demande de covoiturage reçue
   CARPOOL_REQUEST_ACCEPTED  // Demande acceptée
   CARPOOL_REQUEST_REJECTED  // Demande refusée
@@ -137,7 +146,10 @@ model User {
   
   // Métriques d'activité
   lastLoginAt  DateTime?
-  
+
+  // Notifications push
+  expoPushToken String? // Token pour les notifications Expo
+
   // Relations polymorphes
   clientProfile ClientProfile?
   driverProfile DriverProfile?
@@ -196,29 +208,32 @@ model DriverProfile {
   status       DriverStatus @default(PENDING)
   licenseNumber String?      @unique
   driverLocation DriverLocation?
-  
+
   // Informations métier
   driverType    String?      // VTC, Taxi, etc.
   workingHours  String?      // Horaires de travail
   maxRadius     Int?         // Rayon d'action en km
-  
+
   // Métriques performance
   rating        Float?       // Note moyenne
   totalRides    Int          @default(0)
   totalEarnings Decimal      @default(0) @db.Decimal(12,2)
-  
+
+
   // Relations
+  activityStatus   DriverActivityStatus   @default(OFFLINE) // Statut de Disponibilité en temps réel
   documents DriverDocument[]
   vehicles  Vehicle[]
   rides     Ride[]          @relation("DriverRides")
-  
+  wallet    Wallet?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   @@index([status])
   @@index([rating])
   @@index([totalRides])
-  
+
   @@map("driver_profiles")
 }
 
@@ -886,16 +901,142 @@ model PasswordResetCode {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   code      String
   email     String
   expiresAt DateTime
   used      Boolean  @default(false)
   attempts  Int      @default(0)
-  
+
   createdAt DateTime @default(now())
-  
+
   @@index([code])
   @@index([email])
   @@map("password_reset_codes")
+}
+
+// =====================================================
+// SYSTÈME DE PORTEFEUILLE (WALLET)
+// =====================================================
+
+enum WalletTransactionType {
+  EARNING          // Gains d'une course
+  WITHDRAWAL       // Retrait d'argent
+  REFUND           // Remboursement
+  PAYMENT          // Paiement effectué
+  BONUS            // Bonus/récompense
+  COMMISSION       // Commission plateforme
+}
+
+enum WalletTransactionStatus {
+  PENDING    // En attente
+  COMPLETED  // Terminée
+  FAILED     // Échouée
+  CANCELLED  // Annulée
+}
+
+enum PaymentMethodType {
+  CARD           // Carte bancaire
+  WAVE           // Wave
+  ORANGE_MONEY   // Orange Money
+  BANK_ACCOUNT   // Compte bancaire
+}
+
+// Portefeuille du chauffeur
+model Wallet {
+  id              String   @id @default(cuid())
+  driverId        String   @unique
+  driver          DriverProfile @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  // Soldes
+  balance         Decimal  @default(0) @db.Decimal(12,2)  // Solde disponible
+  pendingBalance  Decimal  @default(0) @db.Decimal(12,2)  // Solde en attente
+  totalEarned     Decimal  @default(0) @db.Decimal(12,2)  // Total gagné
+  totalWithdrawn  Decimal  @default(0) @db.Decimal(12,2)  // Total retiré
+
+  currency        String   @default("XOF")
+
+  // Relations
+  transactions    WalletTransaction[]
+  paymentMethods  DriverPaymentMethod[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([driverId])
+  @@map("wallets")
+}
+
+// Transactions du portefeuille
+model WalletTransaction {
+  id          String   @id @default(cuid())
+  walletId    String
+  wallet      Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  type        WalletTransactionType
+  amount      Decimal  @db.Decimal(12,2)
+  currency    String   @default("XOF")
+  status      WalletTransactionStatus @default(PENDING)
+
+  description String
+
+  // Relations optionnelles
+  rideId      String?  // Si lié à une course
+  paymentId   String?  // Si lié à un paiement
+
+  // Informations de retrait
+  withdrawalMethodId String? // Méthode utilisée pour le retrait
+
+  // Métadonnées
+  metadata    Json?
+
+  // Traitement
+  processedAt DateTime?
+  failureReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([walletId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+  @@index([rideId])
+  @@map("wallet_transactions")
+}
+
+// Méthodes de paiement du chauffeur (pour les retraits)
+model DriverPaymentMethod {
+  id         String   @id @default(cuid())
+  walletId   String
+  wallet     Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  type       PaymentMethodType
+  label      String   // Ex: "Carte Visa ****1234", "Wave +221 77 123 45 67"
+
+  // Carte bancaire
+  cardLast4       String?
+  cardBrand       String?  // Visa, MasterCard, etc.
+  cardExpiryMonth String?
+  cardExpiryYear  String?
+
+  // Mobile Money (Wave, Orange Money)
+  phoneNumber     String?
+
+  // Compte bancaire
+  bankName        String?
+  accountNumber   String?
+  accountHolder   String?
+
+  // Configuration
+  isDefault  Boolean  @default(false)
+  isActive   Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([walletId])
+  @@index([type])
+  @@index([isDefault])
+  @@map("driver_payment_methods")
 }

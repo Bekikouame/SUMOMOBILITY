@@ -2,7 +2,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { NotificationType, NotificationChannel } from '@prisma/client';
 
 export async function seedNotificationTemplates(prisma: PrismaService) {
-  console.log(' Création des templates de notification...');
+  console.log('📧 Création des templates de notification...');
 
   const templates = [
     // RIDE_REQUEST - Push
@@ -10,18 +10,29 @@ export async function seedNotificationTemplates(prisma: PrismaService) {
       type: NotificationType.RIDE_REQUEST,
       channel: NotificationChannel.PUSH,
       language: 'fr',
-      title: ' Nouvelle course disponible',
+      title: '🚕 Nouvelle course disponible',
       body: 'Course de {{pickup}} vers {{destination}} - Client: {{clientName}}',
       variables: ['pickup', 'destination', 'clientName'],
       priority: 1
     },
     
+    // RIDE_REQUEST - In-App
+    {
+      type: NotificationType.RIDE_REQUEST,
+      channel: NotificationChannel.IN_APP,
+      language: 'fr',
+      title: '🚕 Nouvelle course disponible',
+      body: 'Course de {{pickup}} vers {{destination}} - Client: {{clientName}}',
+      variables: ['pickup', 'destination', 'clientName'],
+      priority: 1
+    },
+
     // RIDE_ACCEPTED - Push
     {
       type: NotificationType.RIDE_ACCEPTED,
       channel: NotificationChannel.PUSH,
       language: 'fr',
-      title: 'Course acceptée',
+      title: '✅ Course acceptée',
       body: '{{driverName}} arrive dans {{estimatedArrival}} ({{vehiclePlate}})',
       variables: ['driverName', 'vehiclePlate', 'estimatedArrival'],
       priority: 1
@@ -38,14 +49,58 @@ export async function seedNotificationTemplates(prisma: PrismaService) {
 
 Bonne nouvelle ! Votre course a été acceptée par {{driverName}}.
 
- Véhicule: {{vehiclePlate}}
- Arrivée estimée: {{estimatedArrival}}
+🚗 Véhicule: {{vehiclePlate}}
+⏱️ Arrivée estimée: {{estimatedArrival}}
 
 Vous pouvez suivre l'avancement depuis l'application.
 
 Bonne route !
-L'équipe VTC`,
+L'équipe Sumo`,
       variables: ['driverName', 'vehiclePlate', 'estimatedArrival'],
+      priority: 2
+    },
+
+    // 🔥 RIDE_STARTED - Push
+    {
+      type: NotificationType.RIDE_STARTED,
+      channel: NotificationChannel.PUSH,
+      language: 'fr',
+      title: '🚗 C\'est parti !',
+      body: 'Votre course a commencé. Direction {{destination}}',
+      variables: ['destination'],
+      priority: 1
+    },
+
+    // 🔥 RIDE_STARTED - In-App
+    {
+      type: NotificationType.RIDE_STARTED,
+      channel: NotificationChannel.IN_APP,
+      language: 'fr',
+      title: 'Course démarrée',
+      body: 'Votre course a commencé. Direction {{destination}}. Durée estimée: {{estimatedDuration}}',
+      variables: ['destination', 'estimatedDuration'],
+      priority: 1
+    },
+
+    // 🔥 RIDE_STARTED - Email
+    {
+      type: NotificationType.RIDE_STARTED,
+      channel: NotificationChannel.EMAIL,
+      language: 'fr',
+      title: 'Course démarrée',
+      subject: 'Votre course a démarré',
+      body: `Bonjour,
+
+🚗 Votre course a commencé !
+
+📍 Destination: {{destination}}
+⏱️ Durée estimée: {{estimatedDuration}}
+
+Vous pouvez suivre votre trajet en temps réel depuis l'application.
+
+Bon voyage !
+L'équipe Sumo`,
+      variables: ['destination', 'estimatedDuration'],
       priority: 2
     },
 
@@ -54,9 +109,31 @@ L'équipe VTC`,
       type: NotificationType.RIDE_COMPLETED,
       channel: NotificationChannel.PUSH,
       language: 'fr',
-      title: ' Course terminée',
+      title: '✅ Course terminée',
       body: 'Trajet terminé - {{distance}}km en {{duration}} - {{totalFare}} FCFA',
       variables: ['distance', 'duration', 'totalFare'],
+      priority: 1
+    },
+
+    // 🔥 RIDE_CANCELED - Push
+    {
+      type: NotificationType.RIDE_CANCELED,
+      channel: NotificationChannel.PUSH,
+      language: 'fr',
+      title: '❌ Course annulée',
+      body: 'Annulée par {{canceledBy}}. Raison: {{reason}}',
+      variables: ['canceledBy', 'reason'],
+      priority: 1
+    },
+
+    // 🔥 RIDE_CANCELED - In-App
+    {
+      type: NotificationType.RIDE_CANCELED,
+      channel: NotificationChannel.IN_APP,
+      language: 'fr',
+      title: 'Course annulée',
+      body: 'La course de {{pickup}} vers {{destination}} a été annulée par {{canceledBy}}. Raison: {{reason}}',
+      variables: ['pickup', 'destination', 'canceledBy', 'reason'],
       priority: 1
     },
 
@@ -65,7 +142,7 @@ L'équipe VTC`,
       type: NotificationType.DOCUMENT_EXPIRED,
       channel: NotificationChannel.PUSH,
       language: 'fr',
-      title: ' Document expiré',
+      title: '⚠️ Document expiré',
       body: 'Votre {{docType}} a expiré le {{expirationDate}}. Renouvelez-le rapidement.',
       variables: ['docType', 'expirationDate'],
       priority: 1
@@ -80,16 +157,16 @@ L'équipe VTC`,
       subject: 'URGENT: Renouvellement de document requis',
       body: `Bonjour,
 
- ATTENTION: Votre document {{docType}} a expiré le {{expirationDate}}.
+⚠️ ATTENTION: Votre document {{docType}} a expiré le {{expirationDate}}.
 
 Pour continuer à recevoir des courses, vous devez impérativement renouveler ce document.
 
- Connectez-vous sur {{renewalUrl}}
+👉 Connectez-vous sur {{renewalUrl}}
 
 En cas de question, contactez notre support.
 
 Cordialement,
-L'équipe VTC`,
+L'équipe Sumo`,
       variables: ['docType', 'expirationDate', 'renewalUrl'],
       priority: 1
     },
@@ -110,7 +187,7 @@ L'équipe VTC`,
       type: NotificationType.PAYMENT_SUCCESS,
       channel: NotificationChannel.PUSH,
       language: 'fr',
-      title: 'Paiement confirmé',
+      title: '✅ Paiement confirmé',
       body: 'Paiement de {{amount}} FCFA effectué avec succès',
       variables: ['amount'],
       priority: 2
@@ -121,7 +198,7 @@ L'équipe VTC`,
       type: NotificationType.RESERVATION_REMINDER,
       channel: NotificationChannel.PUSH,
       language: 'fr',
-      title: ' Réservation dans 1h',
+      title: '⏰ Réservation dans 1h',
       body: 'Votre course {{pickup}} → {{destination}} à {{scheduledTime}}',
       variables: ['pickup', 'destination', 'scheduledTime'],
       priority: 1
@@ -142,5 +219,5 @@ L'équipe VTC`,
     });
   }
 
-  console.log(` ${templates.length} templates de notification créés`);
+  console.log(`✅ ${templates.length} templates de notification créés`);
 }

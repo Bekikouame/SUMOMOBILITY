@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
-import { AppService } from './app.service';
+import { AppService } from './app.service'; // ✅ Import présent
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
@@ -21,6 +21,10 @@ import { AdminModule } from './modules/admin/admin.module';
 import { RideTrackingModule } from './modules/rides/tracking/ride-tracking.module';
 import { CarpoolController } from './modules/carpool/carpool.controller';
 import { CarpoolModule } from './modules/carpool/carpool.module';
+import { DriversModule } from './modules/drivers/drivers.module';
+import { PushNotificationsModule } from './modules/push-notifications/push-notifications.module';
+import { WalletModule } from './modules/wallet/wallet.module';
+import { RatingsModule } from './modules/ratings/ratings.module';
 
 @Module({
   imports: [
@@ -33,7 +37,7 @@ import { CarpoolModule } from './modules/carpool/carpool.module';
       serveRoot: '/uploads/',
     }),
     EventEmitterModule.forRoot(),
-    
+
     PrismaModule,
     UsersModule,
     AuthModule,
@@ -47,11 +51,16 @@ import { CarpoolModule } from './modules/carpool/carpool.module';
     LocationsModule,
     AdminModule,
     RideTrackingModule,
-    CarpoolModule
-    
+    CarpoolModule,
+    DriversModule,
+    PushNotificationsModule,
+    WalletModule,
+    RatingsModule,
   ],
-  controllers: [CarpoolController],
-  
-   
+  controllers: [
+    CarpoolController, 
+    AppController
+  ],
+  providers: [AppService], 
 })
 export class AppModule {}

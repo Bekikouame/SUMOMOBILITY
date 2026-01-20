@@ -4,16 +4,29 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { UpdateReservationDto } from './dto/update-reservation.dto';
 import { ConvertReservationDto } from './dto/convert-reservation.dto';
-import { ReservationStatus, UserRole, RideStatus } from '@prisma/client';
+import { ReservationStatus, UserRole, RideStatus, NotificationType, NotificationChannel } from '@prisma/client';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { PushNotificationsService } from '../push-notifications/push-notifications.service';
+import { WalletService } from '../wallet/wallet.service';
+import { NotificationsService } from '../notifications/services/notifications.service';
 
 @Injectable()
 export class ReservationsService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(ReservationsService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private eventEmitter: EventEmitter2,
+    private pushNotificationsService: PushNotificationsService,
+    private walletService: WalletService,
+    private notificationsService: NotificationsService,
+  ) {}
 
   // Créer une nouvelle réservation
   async create(clientId: string, createReservationDto: CreateReservationDto) {
@@ -62,6 +75,63 @@ export class ReservationsService {
       }
     });
 
+    // Émettre un événement pour notifier tous les chauffeurs disponibles
+    const eventPayload = {
+      reservationId: reservation.id,
+      clientId: reservation.clientId,
+      clientName: `${clientProfile.user.firstName} ${clientProfile.user.lastName}`,
+      scheduledAt: reservation.scheduledAt,
+      pickupAddress: reservation.pickupAddress,
+      destinationAddress: reservation.destinationAddress,
+      estimatedPrice: reservation.estimatedPrice,
+      passengerCount: reservation.passengerCount,
+    };
+
+    console.log('🔔 Émission événement reservation.created:', eventPayload);
+    this.eventEmitter.emit('reservation.created', eventPayload);
+
+    // 📱 Envoyer notifications à tous les chauffeurs en ligne
+    try {
+      // Push notification système
+      await this.pushNotificationsService.notifyNewReservation(
+        reservation.id,
+        eventPayload.clientName,
+        reservation.scheduledAt,
+        reservation.pickupAddress || '',
+        reservation.destinationAddress || '',
+        Number(reservation.estimatedPrice) || 0,
+      );
+
+      // Notifications in-app pour tous les chauffeurs ONLINE
+      const onlineDrivers = await this.prisma.driverProfile.findMany({
+        where: { activityStatus: 'ONLINE' },
+        select: { userId: true }
+      });
+
+      for (const driver of onlineDrivers) {
+        await this.notificationsService.sendNotification({
+          type: NotificationType.NEW_RESERVATION,
+          userId: driver.userId,
+          channels: [NotificationChannel.IN_APP],
+          variables: {
+            clientName: eventPayload.clientName,
+            pickupAddress: reservation.pickupAddress || '',
+            destinationAddress: reservation.destinationAddress || '',
+            scheduledAt: reservation.scheduledAt.toISOString(),
+            price: reservation.estimatedPrice?.toString() || '0'
+          },
+          metadata: {
+            reservationId: reservation.id
+          },
+          priority: 2
+        });
+      }
+
+      this.logger.log(`✅ Notifications envoyées à ${onlineDrivers.length} chauffeurs en ligne`);
+    } catch (error) {
+      console.error('⚠️ Erreur envoi notifications:', error.message);
+    }
+
     return reservation;
   }
 
@@ -76,7 +146,8 @@ export class ReservationsService {
         where: { userId }
       });
       if (!clientProfile) {
-        throw new NotFoundException('Profil client introuvable');
+        // Retourner un tableau vide au lieu de lancer une erreur
+        return [];
       }
       where.clientId = clientProfile.id;
     }
@@ -96,19 +167,25 @@ export class ReservationsService {
     }
 
     const reservations = await this.prisma.reservation.findMany({
-      where,
+  where,
+  include: {
+    client: { include: { user: true } },
+    cancellationCause: true,
+    ride: {
       include: {
-        client: {
-          include: { user: true }
+        driver: {
+          include: {
+            user: true,
+            vehicles: true,
+          },
         },
-        cancellationCause: true,
-        ride: true,
-        payments: {
-          include: { payment: true }
-        }
       },
-      orderBy: { scheduledAt: 'asc' }
-    });
+    },
+    payments: { include: { payment: true } },
+  },
+  orderBy: { scheduledAt: 'asc' },
+});
+
 
     return reservations;
   }
@@ -362,10 +439,178 @@ export class ReservationsService {
     return updatedReservation;
   }
 
-  // Récupérer les réservations qui approchent (pour notifications)
+  // Accepter une réservation (chauffeur)
+  async acceptReservation(id: string, userId: string) {
+    // Récupérer le profil chauffeur
+    const driverProfile = await this.prisma.driverProfile.findUnique({
+      where: { userId },
+      include: { user: true }
+    });
+
+    if (!driverProfile) {
+      throw new NotFoundException('Profil chauffeur introuvable');
+    }
+
+    // Vérifier que le chauffeur est approuvé
+    if (driverProfile.status !== 'APPROVED') {
+      throw new ForbiddenException('Seuls les chauffeurs approuvés peuvent accepter des réservations');
+    }
+
+    // Récupérer la réservation
+    const reservation = await this.prisma.reservation.findUnique({
+      where: { id },
+      include: {
+        client: { include: { user: true } }
+      }
+    });
+
+    if (!reservation) {
+      throw new NotFoundException('Réservation introuvable');
+    }
+
+    // Vérifier le statut
+    if (reservation.status !== ReservationStatus.PENDING && reservation.status !== ReservationStatus.CONFIRMED) {
+      throw new BadRequestException('Cette réservation ne peut plus être acceptée');
+    }
+
+    // Vérifier que la réservation n'a pas déjà un chauffeur assigné
+    if (reservation.rideId) {
+      const ride = await this.prisma.ride.findUnique({
+        where: { id: reservation.rideId },
+        include: { driver: true }
+      });
+
+      if (ride?.driverId) {
+        throw new BadRequestException('Cette réservation a déjà un chauffeur assigné');
+      }
+    }
+
+    // ✅ NOUVEAU : Vérifier le solde du wallet AVANT d'accepter
+    const totalFare = reservation.estimatedPrice?.toNumber() || 0;
+    const canAccept = await this.walletService.canAcceptRide(driverProfile.id, totalFare);
+
+    if (!canAccept) {
+      throw new BadRequestException(
+        `Solde insuffisant. Rechargez votre wallet de ${totalFare} FCFA pour accepter cette réservation.`
+      );
+    }
+
+    // ✅ NOUVEAU : Déduire le montant total IMMÉDIATEMENT
+    await this.walletService.deductRideFare(driverProfile.id, totalFare, reservation.id);
+    this.logger.log(`💰 ${totalFare} FCFA déduit du wallet du chauffeur ${driverProfile.id} pour réservation ${reservation.id}`);
+
+    // Créer ou mettre à jour la course liée
+    let ride;
+    if (reservation.rideId) {
+      // Mettre à jour la course existante
+      ride = await this.prisma.ride.update({
+        where: { id: reservation.rideId },
+        data: {
+          driverId: driverProfile.id,
+          status: RideStatus.ACCEPTED
+        },
+        include: {
+          client: { include: { user: true } },
+          driver: { include: { user: true } },
+          vehicle: true
+        }
+      });
+    } else {
+      // Créer une nouvelle course
+      ride = await this.prisma.ride.create({
+        data: {
+          clientId: reservation.clientId,
+          driverId: driverProfile.id,
+          rideType: 'STANDARD',
+          pickupAddress: reservation.pickupAddress,
+          destinationAddress: reservation.destinationAddress,
+          pickupLatitude: reservation.pickupLatitude,
+          pickupLongitude: reservation.pickupLongitude,
+          destinationLatitude: reservation.destinationLatitude,
+          destinationLongitude: reservation.destinationLongitude,
+          passengerCount: reservation.passengerCount,
+          notes: reservation.notes,
+          requestedAt: new Date(),
+          baseFare: reservation.estimatedPrice,
+          totalFare: reservation.estimatedPrice,
+          status: RideStatus.ACCEPTED,
+          distanceKm: reservation.estimatedDistance
+        },
+        include: {
+          client: { include: { user: true } },
+          driver: { include: { user: true } },
+          vehicle: true
+        }
+      });
+    }
+
+    // Mettre à jour la réservation
+    const updatedReservation = await this.prisma.reservation.update({
+      where: { id },
+      data: {
+        status: ReservationStatus.CONFIRMED,
+        rideId: ride.id
+      },
+      include: {
+        client: { include: { user: true } },
+        cancellationCause: true,
+        ride: {
+          include: {
+            driver: { include: { user: true } },
+            vehicle: true
+          }
+        },
+        payments: { include: { payment: true } }
+      }
+    });
+
+    // 📱 Notifier le client que sa réservation a été acceptée
+    try {
+      const driverName = `${driverProfile.user.firstName} ${driverProfile.user.lastName}`;
+
+      // Push notification système
+      await this.pushNotificationsService.notifyReservationAccepted(
+        reservation.client.userId,
+        driverName,
+        reservation.id
+      );
+
+      // Notification in-app (pour la cloche)
+      await this.notificationsService.sendNotification({
+        type: NotificationType.RESERVATION_CONFIRMED,
+        userId: reservation.client.userId,
+        channels: [NotificationChannel.IN_APP],
+        variables: {
+          driverName,
+          pickupAddress: reservation.pickupAddress,
+          destinationAddress: reservation.destinationAddress,
+          scheduledAt: reservation.scheduledAt.toISOString(),
+          price: reservation.estimatedPrice?.toString() || '0'
+        },
+        metadata: {
+          reservationId: reservation.id,
+          rideId: ride.id
+        },
+        priority: 2
+      });
+
+      this.logger.log(`✅ Notifications envoyées au client ${reservation.client.userId}`);
+    } catch (error) {
+      this.logger.log('⚠️ Erreur envoi notifications acceptation réservation:', error.message);
+    }
+
+    return {
+      reservation: updatedReservation,
+      ride
+    };
+  }
+
+  // Récupérer les réservations qui approchent (pour notifications et rappels chauffeur)
   async getUpcomingReservations(hoursAhead: number = 24) {
     const now = new Date();
     const futureTime = new Date(now.getTime() + (hoursAhead * 60 * 60 * 1000));
+
+    this.logger.log(`📅 Recherche réservations: de ${now.toISOString()} à ${futureTime.toISOString()}`);
 
     const reservations = await this.prisma.reservation.findMany({
       where: {
@@ -375,14 +620,53 @@ export class ReservationsService {
         scheduledAt: {
           gte: now,
           lte: futureTime
-        }
+        },
+        // ✅ Exclure les covoiturages (ils ont leur propre écran)
+        isSharedRide: false,
+
       },
       include: {
-        client: { include: { user: true } }
+        client: { include: { user: true } },
+        ride: {
+          include: {
+            driver: {
+              include: {
+                user: true,
+                vehicles: true,
+              }
+            }
+          }
+        }
       },
       orderBy: { scheduledAt: 'asc' }
     });
 
+    this.logger.log(`📅 Réservations trouvées: ${reservations.length}`);
+    return reservations;
+  }
+
+  // Récupérer TOUTES les réservations en attente (sans filtre de date)
+  async getPendingReservations() {
+    this.logger.log(`📅 Recherche TOUTES les réservations en attente...`);
+
+    const reservations = await this.prisma.reservation.findMany({
+      where: {
+        status: {
+          in: [ReservationStatus.CONFIRMED, ReservationStatus.PENDING]
+        },
+        // Exclure les covoiturages
+       isSharedRide: false,
+
+        // Exclure les réservations déjà assignées à un chauffeur
+        ride: null,
+      },
+      include: {
+        client: { include: { user: true } },
+      },
+      orderBy: { scheduledAt: 'asc' }
+    });
+
+    this.logger.log(`📅 Réservations en attente trouvées: ${reservations.length}`);
     return reservations;
   }
 

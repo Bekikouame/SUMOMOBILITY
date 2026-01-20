@@ -96,9 +96,24 @@ async getMyNotifications(
 
   
 
+  @Get('unread-count')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Compter les notifications non lues',
+    description: 'Retourne le nombre de notifications non lues de l\'utilisateur'
+  })
+  async getUnreadCount(@Req() req: any) {
+    const count = await this.notificationsService.getUnreadCount(req.user.id);
+
+    return {
+      success: true,
+      count
+    };
+  }
+
   @Patch(':id/read')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Marquer comme lu',
     description: 'Marque une notification comme lue'
   })
@@ -111,6 +126,21 @@ async getMyNotifications(
     return {
       success: true,
       message: 'Notification marquée comme lue'
+    };
+  }
+
+  @Post('mark-all-read')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Marquer toutes comme lues',
+    description: 'Marque toutes les notifications comme lues'
+  })
+  async markAllAsRead(@Req() req: any) {
+    await this.notificationsService.markAllAsRead(req.user.id);
+
+    return {
+      success: true,
+      message: 'Toutes les notifications ont été marquées comme lues'
     };
   }
 

@@ -30,7 +30,7 @@ export class SmsService {
 
       return true;
     } catch (error) {
-      this.logger.error(`Erreur SMS: ${error.message}`);
+      this.logger.log(`Erreur SMS: ${error.message}`);
       return false;
     }
   }

@@ -3,7 +3,7 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '../../../prisma/prisma.service';
 import { UpdateUserStatusDto, BulkUserActionDto } from '../dto/user-management.dto';
 import { AdminLogService } from './admin-log.service';
-import { UserRole, Prisma } from '@prisma/client'; // Import ajouté
+import { UserRole, DriverStatus, Prisma } from '@prisma/client';
 
 @Injectable()
 export class UserManagementService {
@@ -21,7 +21,6 @@ export class UserManagementService {
   ) {
     const skip = (page - 1) * limit;
     
-    // Construction du where avec validation du rôle
     const where: Prisma.UserWhereInput = {};
 
     // Recherche textuelle
@@ -45,11 +44,18 @@ export class UserManagementService {
       }
     }
 
-    // Filtre par statut
+    // Filtre par statut utilisateur
     if (status === 'active') {
       where.isActive = true;
     } else if (status === 'inactive') {
       where.isActive = false;
+    }
+
+    // ✅ NOUVEAU : Filtre spécifique pour les chauffeurs en attente
+    if (role === 'DRIVER' && status === 'pending') {
+      where.driverProfile = {
+        status: DriverStatus.PENDING
+      };
     }
 
     const [users, total] = await Promise.all([
@@ -76,6 +82,7 @@ export class UserManagementService {
           },
           driverProfile: {
             select: {
+              id: true,
               status: true,
               rating: true,
               totalRides: true,
@@ -92,6 +99,59 @@ export class UserManagementService {
 
     return {
       data: users,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  // ✅ NOUVELLE MÉTHODE : Récupérer uniquement les chauffeurs en attente
+  async getPendingDrivers(page: number = 1, limit: number = 20) {
+    const skip = (page - 1) * limit;
+
+    const [drivers, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where: {
+          role: UserRole.DRIVER,
+          driverProfile: {
+            status: DriverStatus.PENDING
+          }
+        },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          createdAt: true,
+          driverProfile: {
+            select: {
+              id: true,
+              status: true,
+              licenseNumber: true,
+              createdAt: true,
+            }
+          }
+        },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.user.count({
+        where: {
+          role: UserRole.DRIVER,
+          driverProfile: {
+            status: DriverStatus.PENDING
+          }
+        }
+      })
+    ]);
+
+    return {
+      drivers,
       pagination: {
         page,
         limit,
@@ -193,16 +253,15 @@ export class UserManagementService {
       data: { isActive: dto.isActive },
     });
 
-    //  Mettre à jour aussi le profil chauffeur si c'est un driver
-  if (user.role === UserRole.DRIVER) {
-    await this.prisma.driverProfile.updateMany({
-      where: { userId: userId },
-      data: { 
-        status: dto.isActive ? 'APPROVED' : 'PENDING' 
-      }
-    });
-  }
-
+    // Mettre à jour aussi le profil chauffeur si c'est un driver
+    if (user.role === UserRole.DRIVER) {
+      await this.prisma.driverProfile.updateMany({
+        where: { userId: userId },
+        data: { 
+          status: dto.isActive ? DriverStatus.APPROVED : DriverStatus.REJECTED
+        }
+      });
+    }
 
     // Log de l'action
     await this.adminLog.log(adminId, {
@@ -236,7 +295,6 @@ export class UserManagementService {
         break;
       
       case 'delete':
-        // Soft delete - on désactive plutôt que supprimer
         result = await this.prisma.user.updateMany({
           where: { id: { in: userIds } },
           data: { isActive: false },
@@ -247,7 +305,6 @@ export class UserManagementService {
         throw new BadRequestException('Action non supportée');
     }
 
-    // Log de l'action groupée
     await this.adminLog.log(adminId, {
       action: `BULK_${action.toUpperCase()}`,
       resource: 'USER',
@@ -263,14 +320,18 @@ export class UserManagementService {
       activeUsers,
       clientsCount,
       driversCount,
+      pendingDriversCount,
+      approvedDriversCount,
       newUsersToday,
       newUsersWeek,
     ] = await Promise.all([
       this.prisma.user.count(),
       this.prisma.user.count({ where: { isActive: true } }),
-      // Correction : utiliser l'enum UserRole au lieu de string
       this.prisma.user.count({ where: { role: UserRole.CLIENT } }),
       this.prisma.user.count({ where: { role: UserRole.DRIVER } }),
+      //  NOUVEAU : Compter les chauffeurs en attente
+      this.prisma.driverProfile.count({ where: { status: DriverStatus.PENDING } }),
+      this.prisma.driverProfile.count({ where: { status: DriverStatus.APPROVED } }),
       this.prisma.user.count({
         where: {
           createdAt: {
@@ -293,18 +354,18 @@ export class UserManagementService {
       inactive: totalUsers - activeUsers,
       clients: clientsCount,
       drivers: driversCount,
+      pendingDrivers: pendingDriversCount,
+      approvedDrivers: approvedDriversCount,
       newToday: newUsersToday,
       newThisWeek: newUsersWeek,
       activityRate: totalUsers > 0 ? (activeUsers / totalUsers * 100).toFixed(1) : 0,
     };
   }
 
-  // Méthode utilitaire pour valider les rôles
   private isValidUserRole(role: string): role is UserRole {
     return Object.values(UserRole).includes(role as UserRole);
   }
 
-  // Méthode utilitaire pour obtenir tous les rôles disponibles
   getAvailableRoles(): UserRole[] {
     return Object.values(UserRole);
   }

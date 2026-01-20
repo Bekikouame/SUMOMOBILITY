@@ -1,39 +1,57 @@
-// src/admin/controllers/admin-logs.controller.ts
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
-import { JwtAuthGuard} from '../../../auth/guards/jwt-auth.guard';
-import {RolesGuard} from '../../../auth/guards/roles.guard';
-import { Roles } from '../../../auth/decorators/roles.decorator';
-import { AdminLogService } from '../services/admin-log.service';
+// src/modules/admin/controllers/admin-logs.controller.ts
 
-@ApiTags('Admin Logs')
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { AdminLogService } from '../services/admin-log.service';
+import { JwtAuthGuard } from '../../../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../auth/guards/roles.guard';
+import { Roles } from '../../../auth/decorators/roles.decorator';
+
 @Controller('admin/logs')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('ADMIN')
-@ApiBearerAuth()
 export class AdminLogsController {
   constructor(private readonly adminLogService: AdminLogService) {}
 
+  /**
+   * GET /admin/logs
+   * Récupérer tous les logs ou les logs d'un admin spécifique
+   */
   @Get()
-  @ApiOperation({ summary: 'Logs d\'activité admin' })
-  @ApiQuery({ name: 'page', required: false, example: 1 })
-  @ApiQuery({ name: 'limit', required: false, example: 50 })
-  @ApiQuery({ name: 'adminId', required: false })
-  @ApiQuery({ name: 'action', required: false })
-  @ApiQuery({ name: 'resource', required: false })
-  getLogs(
+  async getLogs(
+    @Query('adminId') adminId?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
-    @Query('adminId') adminId?: string,
-    @Query('action') action?: string,
-    @Query('resource') resource?: string,
   ) {
     return this.adminLogService.getLogs(
+      adminId,
       page ? parseInt(page) : 1,
       limit ? parseInt(limit) : 50,
-      adminId,
-      action,
-      resource,
+    );
+  }
+
+  /**
+   * GET /admin/logs/statistics
+   * Statistiques des logs
+   */
+  @Get('statistics')
+  async getStatistics() {
+    return this.adminLogService.getLogStatistics();
+  }
+
+  /**
+   * GET /admin/logs/search
+   * Rechercher dans les logs
+   */
+  @Get('search')
+  async searchLogs(
+    @Query('q') searchTerm: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.adminLogService.searchLogs(
+      searchTerm,
+      page ? parseInt(page) : 1,
+      limit ? parseInt(limit) : 50,
     );
   }
 }

@@ -1,4 +1,5 @@
 // src/modules/rides/rides.controller.ts - Version corrigée
+
 import { 
   Controller, 
   Get, 
@@ -8,7 +9,7 @@ import {
   Param, 
   Query,
   UseGuards,
-  Req,
+  Req, 
   HttpStatus,
   BadRequestException
 } from '@nestjs/common';
@@ -126,20 +127,18 @@ export class RidesController {
     return this.ridesService.completeRide(userId, id);
   }
 
+  // 
   @Patch(':id/cancel')
+  @Roles('CLIENT', 'DRIVER')
   @ApiOperation({ summary: 'Annuler une course' })
   @ApiParam({ name: 'id', description: 'ID de la course' })
   @ApiBody({ type: CancelRideDto })
-  @ApiResponse({ status: HttpStatus.OK, description: 'Course annulée' })
-  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Impossible d\'annuler la course' })
-  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Pas d\'autorisation pour annuler' })
   async cancelRide(
-    @Req() req: any, 
     @Param('id') id: string, 
-    @Body() cancelDto: CancelRideDto
+    @Body() cancelDto: CancelRideDto,
+    @Req() req, 
   ) {
-    const userId = this.extractUserId(req);
-    return this.ridesService.cancelRide(userId, id, cancelDto);
+    return this.ridesService.cancelRide(id, cancelDto);
   }
 
   @Post(':id/rating')
@@ -157,11 +156,11 @@ export class RidesController {
     const userId = this.extractUserId(req);
     return this.ridesService.rateRide(userId, id, ratingDto);
   }
-  // rides.controller.ts
-@Post('estimate-fare')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.CLIENT)
-async estimateFare(@Body() estimateDto: EstimateFareDto) {
-  return this.ridesService.estimateFare(estimateDto);
-}
+
+  @Post('estimate-fare')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.CLIENT)
+  async estimateFare(@Body() estimateDto: EstimateFareDto) {
+    return this.ridesService.estimateFare(estimateDto);
+  }
 }
