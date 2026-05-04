@@ -1,23 +1,31 @@
 // src/modules/rides/dto/create-ride.dto.ts
-import { IsNumber, IsString, IsOptional, IsIn } from 'class-validator';
+import { IsNumber, IsString, IsOptional, IsIn, Min, Max } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateRideDto {
   @ApiProperty({ description: 'Latitude du point de départ' })
   @IsNumber()
-  pickupLatitude: number;
+  @Min(-90)
+  @Max(90)
+  pickupLatitude!: number;
 
   @ApiProperty({ description: 'Longitude du point de départ' })
   @IsNumber()
-  pickupLongitude: number;
+  @Min(-180)
+  @Max(180)
+  pickupLongitude!: number;
 
   @ApiProperty({ description: 'Latitude de destination' })
   @IsNumber()
-  destinationLatitude: number;
+  @Min(-90)
+  @Max(90)
+  destinationLatitude!: number;
 
   @ApiProperty({ description: 'Longitude de destination' })
   @IsNumber()
-  destinationLongitude: number;
+  @Min(-180)
+  @Max(180)
+  destinationLongitude!: number;
 
   @ApiProperty({ description: 'Adresse de départ', required: false })
   @IsOptional()
@@ -48,7 +56,7 @@ export class CreateRideDto {
   // OBLIGATOIRE - RETIRER @IsOptional()
   @ApiProperty({ description: 'Prix accepté par le client après estimation' })
   @IsNumber()
-  acceptedFare: number; // Plus d'interrogation, plus d'@IsOptional()
+  acceptedFare!: number; // Plus d'interrogation, plus d'@IsOptional()
 
   @ApiProperty({ description: 'ID de l\'estimation pour traçabilité', required: false })
   @IsOptional()

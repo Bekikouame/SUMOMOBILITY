@@ -20,7 +20,7 @@ import { DriverActivityStatus } from '@prisma/client';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('DRIVER')
 export class DriversAppController {
-  constructor(private driversService: DriversService) {}
+  constructor(private readonly driversService: DriversService) {}
 
   @Post('go-online')
   @HttpCode(HttpStatus.OK)
@@ -56,11 +56,13 @@ export class DriversAppController {
 
   @Get('status')
   @ApiOperation({ summary: 'Récupérer le statut actuel du chauffeur' })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Statut du chauffeur récupéré',
-  })
   async getDriverStatus(@CurrentUser() driver: any) {
     return this.driversService.getDriverStatus(driver.id);
+  }
+
+  @Get('available-rides')
+  @ApiOperation({ summary: 'Courses REQUESTED disponibles (polling fallback)' })
+  async getAvailableRides(@CurrentUser() driver: any) {
+    return this.driversService.getAvailableRides(driver.id);
   }
 }

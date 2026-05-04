@@ -18,8 +18,7 @@ export class EmailService {
         pass: process.env.SMTP_PASSWORD,
       },
       tls: {
-        // ✅ Accepter les certificats auto-signés si nécessaire
-        rejectUnauthorized: false
+        rejectUnauthorized: process.env.NODE_ENV !== 'development',
       }
     });
 

@@ -17,6 +17,8 @@ import { AutoApprovalService } from './services/auto-approval.service';
 import { ApprovalController } from './controllers/approval.controller';
 import { EmailModule } from '../email/email.module';
 import { DocumentsModule } from 'src/documents/documents.module';
+import { DriverManagementController } from './controllers/driver-management.controller';
+import { DriverManagementService } from './services/driver-management.service';
 
 
 @Module({
@@ -29,7 +31,7 @@ import { DocumentsModule } from 'src/documents/documents.module';
     ReportsService,
     AdminLogService,
     AutoApprovalService,
-    
+    DriverManagementService,
   ],
   controllers: [
     DashboardController,
@@ -38,7 +40,7 @@ import { DocumentsModule } from 'src/documents/documents.module';
     ReportsController,
     AdminLogsController,
     ApprovalController,
-    
+    DriverManagementController,
   ],
   exports: [
     DashboardService,
@@ -47,6 +49,7 @@ import { DocumentsModule } from 'src/documents/documents.module';
     ReportsService,
     AdminLogService,
     AutoApprovalService,
+    DriverManagementService,
   ],
 })
 export class AdminModule {}

@@ -149,98 +149,61 @@ async createRide(userId: string, createRideDto: CreateRideDto) {
 private async findAvailableDrivers(rideId: string) {
   const ride = await this.prisma.ride.findUnique({
     where: { id: rideId },
-    include: {
-      client: {
-        include: { user: true },
-      },
-    },
+    include: { client: { include: { user: true } } },
   });
 
-  if (!ride || ride.status !== RideStatus.REQUESTED) {
-    return;
-  }
+  if (!ride || ride.status !== RideStatus.REQUESTED) return;
 
+  const SEARCH_RADIUS_KM = 15;
 
-  const allDrivers = await this.prisma.driverProfile.findMany({
-    include: {
-      user: { select: { id: true, firstName: true, lastName: true } },
-      vehicles: true,
-    },
+  // Debug : compter les chauffeurs à chaque étape du filtre
+  const totalApproved = await this.prisma.driverProfile.count({ where: { status: DriverStatus.APPROVED } });
+  const totalOnline   = await this.prisma.driverProfile.count({ where: { status: DriverStatus.APPROVED, activityStatus: DriverActivityStatus.ONLINE } });
+  const totalWithVehicle = await this.prisma.driverProfile.count({
+    where: { status: DriverStatus.APPROVED, activityStatus: DriverActivityStatus.ONLINE, vehicles: { some: { verified: true, status: VehicleStatus.AVAILABLE } } },
   });
+  this.logger.log(`[DEBUG] Chauffeurs — approuvés: ${totalApproved}, en ligne: ${totalOnline}, avec véhicule dispo: ${totalWithVehicle}`);
 
-  console.log('=== 🔍 DEBUG CHAUFFEURS ===');
-  console.log(`Total chauffeurs en BDD: ${allDrivers.length}`);
-  
-  allDrivers.forEach((driver, index) => {
-    console.log(`\n--- Chauffeur ${index + 1} ---`);
-    console.log(`Nom: ${driver.user.firstName} ${driver.user.lastName}`);
-    console.log(`UserID: ${driver.user.id}`);
-    console.log(`Status: ${driver.status}`);
-    console.log(`ActivityStatus: ${driver.activityStatus}`);
-    console.log(`Véhicules: ${driver.vehicles.length}`);
-    
-    driver.vehicles.forEach((vehicle, vIndex) => {
-      console.log(`  Véhicule ${vIndex + 1}:`);
-      console.log(`    - Status: ${vehicle.status}`);
-      console.log(`    - Verified: ${vehicle.verified}`);
-      console.log(`    - Capacity: ${vehicle.capacity}`);
-    });
-  });
-  console.log('=========================\n');
-
-  // Recherche chauffeurs (pour l'instant pas de filtrage géographique strict)
-  const availableDrivers = await this.prisma.driverProfile.findMany({
+  // Récupérer les chauffeurs APPROVED + ONLINE (véhicule vérifié si possible, sinon tous)
+  const candidates = await this.prisma.driverProfile.findMany({
     where: {
       status: DriverStatus.APPROVED,
       activityStatus: DriverActivityStatus.ONLINE,
-      vehicles: {
-        some: {
-          status: VehicleStatus.AVAILABLE,
-          verified: true,
-          capacity: { gte: ride.passengerCount },
-        },
-      },
     },
     include: {
       user: { select: { id: true, firstName: true, lastName: true, phone: true } },
-      vehicles: {
-        where: {
-          status: VehicleStatus.AVAILABLE,
-          verified: true,
-        },
-      },
+      driverLocation: true,
+      vehicles: { where: { status: VehicleStatus.AVAILABLE } },
     },
-    take: 10,
+    take: 50,
   });
 
-console.log(' Chauffeurs disponibles après filtres:', availableDrivers.length);
-  console.log(' Filtres appliqués:');
-  console.log(`  - status: ${DriverStatus.APPROVED}`);
-  console.log(`  - activityStatus: ${DriverActivityStatus.ONLINE}`);
-  console.log(`  - vehicle.status: ${VehicleStatus.AVAILABLE}`);
-  console.log(`  - vehicle.verified: true`);
-  console.log(`  - vehicle.capacity >= ${ride.passengerCount}`);
+  // Filtrage géographique : priorité aux chauffeurs avec position connue dans le rayon
+  const driversWithLocation = candidates
+    .filter(d => d.driverLocation && this.calculateDistance(
+      ride.pickupLatitude ?? 0,
+      ride.pickupLongitude ?? 0,
+      d.driverLocation.latitude,
+      d.driverLocation.longitude,
+    ) <= SEARCH_RADIUS_KM)
+    .sort((a, b) => {
+      const distA = this.calculateDistance(ride.pickupLatitude ?? 0, ride.pickupLongitude ?? 0, a.driverLocation!.latitude, a.driverLocation!.longitude);
+      const distB = this.calculateDistance(ride.pickupLatitude ?? 0, ride.pickupLongitude ?? 0, b.driverLocation!.latitude, b.driverLocation!.longitude);
+      return distA - distB;
+    });
+
+  // Fallback : si aucun chauffeur géolocalisé, notifier tous les ONLINE (phase de démarrage)
+  const availableDrivers = driversWithLocation.length > 0
+    ? driversWithLocation.slice(0, 5)
+    : candidates.slice(0, 5);
 
   this.logger.log(
-    `Found ${availableDrivers.length} available drivers for ride ${rideId}`,
+    `Ride ${rideId}: ${availableDrivers.length} chauffeur(s) sélectionné(s) ` +
+    `(${driversWithLocation.length} géolocalisés dans ${SEARCH_RADIUS_KM}km, fallback: ${candidates.length})`
   );
 
-  // Notifier chaque chauffeur disponible (notifications "classiques")
-  for (const driver of availableDrivers.slice(0, 5)) {
-    // Calculer la distance de manière sécurisée
-    const distance =
-      ride.pickupLatitude &&
-      ride.pickupLongitude &&
-      ride.destinationLatitude &&
-      ride.destinationLongitude
-        ? this.calculateDistance(
-            ride.pickupLatitude,
-            ride.pickupLongitude,
-            ride.destinationLatitude,
-            ride.destinationLongitude,
-          ).toFixed(1)
-        : 'Non calculée';
-
+  // Notifications in-app
+  for (const driver of availableDrivers) {
     await this.notificationsService.sendNotification({
       type: NotificationType.RIDE_REQUEST,
       userId: driver.user.id,
@@ -249,36 +212,15 @@ console.log(' Chauffeurs disponibles après filtres:', availableDrivers.length);
         clientName: `${ride.client.user.firstName} ${ride.client.user.lastName}`,
         pickup: ride.pickupAddress,
         destination: ride.destinationAddress,
-        distance: `${distance} km`,
         estimatedFare: `${ride.totalFare} FCFA`,
         details: `Course de ${ride.pickupAddress} vers ${ride.destinationAddress}`,
       },
-      metadata: {
-        rideId: ride.id,
-        clientId: ride.clientId,
-      },
+      metadata: { rideId: ride.id, clientId: ride.clientId },
     });
   }
- 
 
-
-  // construire la liste des userIds des chauffeurs ciblés (max 5)
-  const targetDriverUserIds = availableDrivers.slice(0, 5).map((d) => d.user.id);
-
-  console.log(' UserIds pour WebSocket:', targetDriverUserIds);
-  console.log(' Rooms actives avant émission:', 
-  );
-  // Émettre un événement pour WebSocket / autres processus
-
-const durationMinutes = ride.distanceKm
-  ? Math.ceil((ride.distanceKm / 30) * 60)
-  : 0;
-
-  console.log('Chauffeurs trouvés:', availableDrivers.length);
-  console.log('UserIds des chauffeurs:', targetDriverUserIds);
-
-  // ✅ Émission immédiate au lieu d'un délai de 5 secondes
-  this.logger.log('📤 Émission immédiate de ride.requested');
+  const targetDriverUserIds = availableDrivers.map(d => d.user.id);
+  const durationMinutes = ride.distanceKm ? Math.ceil((ride.distanceKm / 30) * 60) : 0;
 
   this.eventEmitter.emit('ride.requested', {
     rideId: ride.id,
@@ -294,7 +236,7 @@ const durationMinutes = ride.distanceKm
     totalFare: ride.totalFare,
     baseFare: ride.baseFare,
     distanceKm: ride.distanceKm,
-    durationMinutes: durationMinutes,
+    durationMinutes,
     passengerCount: ride.passengerCount,
     rideType: ride.rideType,
     notes: ride.notes,
@@ -304,6 +246,30 @@ const durationMinutes = ride.distanceKm
   });
 }
 
+
+  // ===============================
+  // REFUSER UNE COURSE
+  // ===============================
+  async rejectRide(userId: string, rideId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { driverProfile: true },
+    });
+
+    if (!user || user.role !== UserRole.DRIVER || !user.driverProfile) {
+      throw new ForbiddenException('Only drivers can reject rides');
+    }
+
+    const ride = await this.prisma.ride.findUnique({ where: { id: rideId } });
+    if (!ride) throw new NotFoundException('Ride not found');
+    if (ride.status !== RideStatus.REQUESTED) {
+      throw new BadRequestException('Ride is no longer available');
+    }
+
+    this.logger.log(`Driver ${user.driverProfile.id} rejected ride ${rideId}`);
+    // La course reste REQUESTED — d'autres chauffeurs peuvent l'accepter
+    return { success: true, message: 'Ride rejected' };
+  }
 
   // ===============================
   // ACCEPTER UNE COURSE

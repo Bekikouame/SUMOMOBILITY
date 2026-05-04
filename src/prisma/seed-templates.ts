@@ -247,7 +247,7 @@ L'équipe VTC`,
         console.log(`ℹ Existe: ${template.type}/${template.channel}/${template.language}`);
       }
     } catch (error) {
-      console.error(` Erreur pour ${template.type}/${template.channel}:`, error.message);
+      console.error(` Erreur pour ${template.type}/${template.channel}:`, error instanceof Error ? error.message : error);
     }
   }
 

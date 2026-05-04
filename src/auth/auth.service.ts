@@ -14,6 +14,8 @@ import { LoginDto} from './dto/login.dto';
 import { JwtPayload, AuthResponse, TokenPair } from './interfaces/auth.interface';
 import { $Enums, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
+import { TokenBlacklistService } from './token-blacklist.service';
 import { EmailService } from '../modules/email/email.service';
 import {ForgotPasswordDto} from "./dto/forgot-password.dto"
 import {ResetPasswordDto} from "./dto/reset-password.dto"
@@ -25,6 +27,7 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private emailService: EmailService,
+    private blacklist: TokenBlacklistService,
   ) {}
 
   /**
@@ -248,12 +251,7 @@ export class AuthService {
       throw new NotFoundException('Utilisateur introuvable');
     }
 
-    // Dans une implémentation complète, on pourrait :
-    // - Blacklister le refresh token
-    // - Enregistrer l'heure de déconnexion
-    // - Invalider les sessions actives
-
-    // Pour l'instant, on se contente de confirmer la déconnexion
+    this.blacklist.invalidateUser(userId);
     return { message: 'Déconnexion réussie' };
   }
 
@@ -375,8 +373,8 @@ export class AuthService {
     data: { used: true }
   });
 
-  // Générer code 6 chiffres
-  const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+  // Générer code 8 caractères alphanumériques cryptographiquement sûr
+  const resetCode = crypto.randomBytes(4).toString('hex').toUpperCase();
 
   // Sauvegarder code
   await this.prisma.passwordResetCode.create({

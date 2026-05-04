@@ -5,21 +5,14 @@ import { PrismaClient } from '@prisma/client';
 
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
-  private prisma: PrismaClient;
+  private readonly prisma: PrismaClient;
   
 
   constructor() {
     this.prisma = new PrismaClient({
-      // L'URL de connexion est lue depuis process.env.DATABASE_URL
       log: ['query', 'info', 'warn', 'error'],
       errorFormat: 'pretty',
     });
-
-    // this.prisma = new PrismaClient({
-    //   adapter,
-    //   log: ['query', 'info', 'warn', 'error'],
-    //   errorFormat: 'pretty',
-    // });
   }
 
   async onModuleInit() {
@@ -144,6 +137,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   }
 
   // === Méthodes Prisma ===
+  get rideTrackingPoint() {
+    return this.prisma.rideTrackingPoint;
+  }
+
   get $transaction() {
     return this.prisma.$transaction.bind(this.prisma);
   }

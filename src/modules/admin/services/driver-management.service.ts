@@ -256,27 +256,27 @@ export class DriverManagementService {
       throw new NotFoundException('Chauffeur non trouvé');
     }
 
-    const REQUIRED_DOCS = ['DRIVER_LICENSE', 'IDENTITY_CARD', 'VEHICLE_REGISTRATION', 'INSURANCE'];
-    const approvedDocs = driver.documents
-      .filter(d => d.status === DocumentStatus.APPROVED)
-      .map(d => d.docType);
-
-    const missingApprovals = REQUIRED_DOCS.filter(type => !approvedDocs.includes(type));
-
-    if (missingApprovals.length > 0) {
-      throw new BadRequestException(
-        `Documents manquants ou non approuvés: ${missingApprovals.join(', ')}`
-      );
+    // Approuver automatiquement tous les documents PENDING du chauffeur
+    if (driver.documents.length > 0) {
+      await this.prisma.driverDocument.updateMany({
+        where: {
+          driverId,
+          status: { in: [DocumentStatus.PENDING, DocumentStatus.REJECTED] },
+        },
+        data: { status: DocumentStatus.APPROVED },
+      });
     }
+
+    // Vérifier automatiquement tous les véhicules du chauffeur
+    await this.prisma.vehicle.updateMany({
+      where: { driverId },
+      data: { verified: true, status: 'AVAILABLE' },
+    });
 
     const updatedDriver = await this.prisma.driverProfile.update({
       where: { id: driverId },
-      data: {
-        status: DriverStatus.APPROVED,
-      },
-      include: {
-        user: true,
-      },
+      data: { status: DriverStatus.APPROVED },
+      include: { user: true },
     });
 
     await this.emailService.sendDriverApprovalEmail(
@@ -289,6 +289,21 @@ export class DriverManagementService {
       success: true,
       message: 'Chauffeur approuvé avec succès',
       driver: updatedDriver,
+    };
+  }
+
+  async verifyDriverVehicles(driverId: string) {
+    const driver = await this.prisma.driverProfile.findUnique({ where: { id: driverId } });
+    if (!driver) throw new NotFoundException('Chauffeur non trouvé');
+
+    const result = await this.prisma.vehicle.updateMany({
+      where: { driverId },
+      data: { verified: true, status: 'AVAILABLE' },
+    });
+
+    return {
+      success: true,
+      message: `${result.count} véhicule(s) vérifié(s)`,
     };
   }
 

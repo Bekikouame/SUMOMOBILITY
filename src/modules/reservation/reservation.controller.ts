@@ -101,8 +101,8 @@ export class ReservationsController {
   }
 
   @Get('upcoming')
-  @Roles(UserRole.ADMIN, UserRole.DRIVER)
-  @ApiOperation({ summary: 'Récupérer les réservations à venir (pour notifications)' })
+  @Roles(UserRole.ADMIN, UserRole.DRIVER, UserRole.CLIENT)
+  @ApiOperation({ summary: 'Récupérer les réservations à venir' })
   @ApiQuery({ name: 'hours', required: false, type: Number, description: 'Nombre d\'heures à l\'avance (défaut: 720 = 30 jours)' })
   @ApiResponse({
     status: HttpStatus.OK,

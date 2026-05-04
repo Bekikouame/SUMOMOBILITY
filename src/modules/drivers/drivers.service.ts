@@ -96,6 +96,60 @@ export class DriversService {
   }
 
   /**
+   * Courses REQUESTED disponibles pour ce chauffeur (polling fallback)
+   */
+  async getAvailableRides(userId: string) {
+    const driverProfile = await this.prisma.driverProfile.findUnique({
+      where: { userId },
+      select: { id: true, status: true, activityStatus: true },
+    });
+
+    if (!driverProfile || driverProfile.status !== 'APPROVED' || driverProfile.activityStatus !== 'ONLINE') {
+      return { rides: [], count: 0 };
+    }
+
+    const since = new Date(Date.now() - 10 * 60 * 1000);
+    const rides = await this.prisma.ride.findMany({
+      where: { status: 'REQUESTED', driverId: null, createdAt: { gte: since } },
+      include: {
+        client: {
+          include: {
+            user: { select: { id: true, firstName: true, lastName: true, phone: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+    });
+
+    return {
+      rides: rides.map(r => ({
+        rideId: r.id,
+        id: r.id,
+        clientName: `${r.client.user.firstName} ${r.client.user.lastName}`,
+        clientPhone: r.client.user.phone,
+        pickupAddress: r.pickupAddress,
+        destinationAddress: r.destinationAddress,
+        pickupLatitude: r.pickupLatitude,
+        pickupLongitude: r.pickupLongitude,
+        destinationLatitude: r.destinationLatitude,
+        destinationLongitude: r.destinationLongitude,
+        totalFare: r.totalFare,
+        baseFare: r.baseFare,
+        amount: r.totalFare,
+        distanceKm: r.distanceKm,
+        durationMinutes: r.durationMinutes ?? 0,
+        passengerCount: r.passengerCount,
+        rideType: r.rideType,
+        notes: r.notes,
+        status: r.status,
+        requestedAt: r.requestedAt,
+      })),
+      count: rides.length,
+    };
+  }
+
+  /**
    * Récupérer tous les chauffeurs en attente
    */
   async getPendingDrivers(page = 1, limit = 20) {

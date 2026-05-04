@@ -128,29 +128,80 @@ export class DashboardService {
   }
 
   async getRidesChartData(filters: DashboardFilterDto) {
-    const { dateFrom, dateTo, period = 'day' } = filters;
-    
-    // Configuration du groupement selon la période
-    const dateFormat = {
-      day: '%Y-%m-%d',
-      week: '%Y-%u',
-      month: '%Y-%m',
-      year: '%Y'
-    }[period];
+    const { dateFrom, dateTo, period = 'month' } = filters;
 
-    const rides = await this.prisma.$queryRaw`
-      SELECT 
-        DATE_FORMAT(created_at, ${dateFormat}) as period,
+    const dateFormat = {
+      day: 'YYYY-MM-DD',
+      week: 'IYYY-IW',
+      month: 'YYYY-MM',
+      year: 'YYYY',
+    }[period] || 'YYYY-MM';
+
+    const from = new Date(dateFrom || new Date(new Date().getFullYear(), 0, 1));
+    const to = new Date(dateTo || new Date());
+
+    const rides = await this.prisma.$queryRaw<
+      { period: string; total: bigint; completed: bigint; canceled: bigint; revenue: number }[]
+    >`
+      SELECT
+        TO_CHAR("createdAt", ${dateFormat}) as period,
         COUNT(*) as total,
         SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN status = 'CANCELED' THEN 1 ELSE 0 END) as canceled
-      FROM rides 
-      WHERE created_at BETWEEN ${new Date(dateFrom || '2024-01-01')} AND ${new Date(dateTo || new Date())}
+        SUM(CASE WHEN status = 'CANCELED' THEN 1 ELSE 0 END) as canceled,
+        COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN "totalFare" ELSE 0 END), 0) as revenue
+      FROM "Ride"
+      WHERE "createdAt" BETWEEN ${from} AND ${to}
       GROUP BY period
       ORDER BY period
     `;
 
-    return rides;
+    return rides.map(r => ({
+      period: r.period,
+      total: Number(r.total),
+      completed: Number(r.completed),
+      canceled: Number(r.canceled),
+      revenue: Number(r.revenue),
+    }));
+  }
+
+  async getRecentRides(limit: number = 10) {
+    const rides = await this.prisma.ride.findMany({
+      select: {
+        id: true,
+        status: true,
+        pickupAddress: true,
+        destinationAddress: true,
+        totalFare: true,
+        createdAt: true,
+        client: {
+          select: {
+            user: { select: { firstName: true, lastName: true } },
+          },
+        },
+        driver: {
+          select: {
+            user: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+
+    return rides.map(r => ({
+      id: r.id,
+      status: r.status,
+      pickupAddress: r.pickupAddress,
+      destinationAddress: r.destinationAddress,
+      totalFare: r.totalFare,
+      createdAt: r.createdAt,
+      clientName: r.client?.user
+        ? `${r.client.user.firstName} ${r.client.user.lastName}`
+        : '—',
+      driverName: r.driver?.user
+        ? `${r.driver.user.firstName} ${r.driver.user.lastName}`
+        : '—',
+    }));
   }
 
   async getTopDrivers(limit: number = 10) {
@@ -182,6 +233,81 @@ export class DashboardService {
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
+  }
+
+  async getAllRides(page: number = 1, limit: number = 20, status?: string, search?: string) {
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (status && status !== 'ALL') {
+      where.status = status;
+    }
+    if (search && search.trim()) {
+      where.OR = [
+        { pickupAddress: { contains: search, mode: 'insensitive' } },
+        { destinationAddress: { contains: search, mode: 'insensitive' } },
+        { client: { user: { firstName: { contains: search, mode: 'insensitive' } } } },
+        { client: { user: { lastName: { contains: search, mode: 'insensitive' } } } },
+        { driver: { user: { firstName: { contains: search, mode: 'insensitive' } } } },
+        { driver: { user: { lastName: { contains: search, mode: 'insensitive' } } } },
+      ];
+    }
+
+    const [rides, total] = await Promise.all([
+      this.prisma.ride.findMany({
+        where,
+        select: {
+          id: true,
+          status: true,
+          pickupAddress: true,
+          destinationAddress: true,
+          distanceKm: true,
+          durationMinutes: true,
+          baseFare: true,
+          totalFare: true,
+          driverEarnings: true,
+          platformFee: true,
+          passengerCount: true,
+          rideType: true,
+          requestedAt: true,
+          acceptedAt: true,
+          startedAt: true,
+          completedAt: true,
+          canceledAt: true,
+          createdAt: true,
+          client: {
+            select: {
+              id: true,
+              user: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
+            },
+          },
+          driver: {
+            select: {
+              id: true,
+              rating: true,
+              user: { select: { id: true, firstName: true, lastName: true, phone: true } },
+            },
+          },
+          ratings: {
+            select: { score: true, comment: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.ride.count({ where }),
+    ]);
+
+    return {
+      rides,
+      pagination: {
+        total,
+        page,
+        limit,
+        pages: Math.ceil(total / limit),
+      },
+    };
   }
 
   async getGeographicStats() {

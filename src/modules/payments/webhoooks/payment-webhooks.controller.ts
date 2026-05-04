@@ -3,6 +3,7 @@ import { Controller, Post, Body, Headers, BadRequestException } from '@nestjs/co
 import { PaymentProcessorService } from '../services/payment-processor.service';
 import { PaymentsService } from '../payments.service';
 import { PaymentMethod } from '@prisma/client';
+import * as crypto from 'crypto';
 
 @Controller('webhooks/payments')
 export class PaymentWebhooksController {
@@ -36,8 +37,22 @@ export class PaymentWebhooksController {
   }
 
   @Post('mobile-money')
-  async handleMobileMoneyWebhook(@Body() payload: any) {
-    // Traiter les callbacks Mobile Money
+  async handleMobileMoneyWebhook(
+    @Body() payload: any,
+    @Headers('x-webhook-signature') signature: string,
+  ) {
+    const secret = process.env.MOBILE_MONEY_WEBHOOK_SECRET;
+    if (secret) {
+      if (!signature) throw new BadRequestException('Signature manquante');
+      const expected = crypto
+        .createHmac('sha256', secret)
+        .update(JSON.stringify(payload))
+        .digest('hex');
+      if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+        throw new BadRequestException('Signature invalide');
+      }
+    }
+
     const { transactionId, status, amount } = payload;
 
     const payment = await this.paymentsService.findByTransactionId(transactionId);

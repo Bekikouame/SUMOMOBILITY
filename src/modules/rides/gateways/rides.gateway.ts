@@ -10,7 +10,6 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger, Injectable } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../../prisma/prisma.service';
 
@@ -219,174 +218,12 @@ export class RidesGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
-  // ÉCOUTER L'ÉVÉNEMENT ride.requested
-  @OnEvent('ride.requested')
-  handleRideRequested(payload: {
-    rideId: string;
-    clientId: string;
-    clientName: string;
-    clientPhone: string;
-    pickupAddress: string;
-    destinationAddress: string;
-    pickupLatitude: number;
-    pickupLongitude: number;
-    destinationLatitude: number;
-    destinationLongitude: number;
-    totalFare: number;
-    baseFare: number;
-    distanceKm: number;
-    durationMinutes: number;
-    passengerCount: number;
-    rideType: string;
-    notes?: string;
-    status: string;
-    requestedAt: Date;
-    driverUserIds: string[];
-  }) {
-    this.logger.log(
-      `Événement ride.requested reçu pour ride ${payload.rideId}, notifiant ${payload.driverUserIds.length} chauffeurs`
-    );
-
-    const allRooms = Array.from(this.server.sockets.adapter.rooms.keys());
-    this.logger.log(`Rooms actives: ${allRooms.join(', ')}`);
-
-    for (const driverUserId of payload.driverUserIds) {
-      const userRoom = `user:${driverUserId}`;
-
-      const roomExists = this.server.sockets.adapter.rooms.has(userRoom);
-      this.logger.log(
-        `Émission ride.request vers room ${userRoom} (existe: ${roomExists})`
-      );
-
-      this.server.to(userRoom).emit('ride.request', {
-        // IDs
-        rideId: payload.rideId,
-        id: payload.rideId,
-        
-        // Client
-        clientName: payload.clientName,
-        clientPhone: payload.clientPhone,
-        
-        // Adresses
-        pickupAddress: payload.pickupAddress,
-        destinationAddress: payload.destinationAddress,
-        
-        // Coordonnées
-        pickupLatitude: payload.pickupLatitude,
-        pickupLongitude: payload.pickupLongitude,
-        destinationLatitude: payload.destinationLatitude,
-        destinationLongitude: payload.destinationLongitude,
-        
-        // Prix
-        totalFare: payload.totalFare,
-        baseFare: payload.baseFare,
-        amount: payload.totalFare,
-        
-        // Détails
-        distanceKm: payload.distanceKm,
-        durationMinutes: payload.durationMinutes,
-        passengerCount: payload.passengerCount,
-        rideType: payload.rideType,
-        notes: payload.notes,
-        status: payload.status,
-        
-        // Timestamps
-        requestedAt: payload.requestedAt,
-        timestamp: new Date(),
-      });
-    }
+  @SubscribeMessage('ping')
+  handlePing(@ConnectedSocket() client: Socket) {
+    client.emit('pong');
+    return { success: true };
   }
 
-  // ÉCOUTER L'ÉVÉNEMENT ride.accepted
-  @OnEvent('ride.accepted')
-  async handleRideAccepted(payload: any) {
-    const { rideId, clientId, driverId, driverName } = payload;
-
-    this.logger.log(
-      `Événement ride.accepted reçu pour ride ${rideId}`
-    );
-
-    try {
-      const ride = await this.prisma.ride.findUnique({
-        where: { id: rideId },
-        include: {
-          client: { include: { user: true } }
-        }
-      });
-
-      if (!ride) {
-        this.logger.error(`Course ${rideId} non trouvée`);
-        return;
-      }
-
-      const clientUserId = ride.client.user.id;
-      const clientRoomName = `user:${clientUserId}`;
-      const roomExists = this.server.sockets.adapter.rooms.has(clientRoomName);
-
-      this.logger.log(
-        `Émission ride.accepted vers room ${clientRoomName} (existe: ${roomExists})`
-      );
-
-      this.server.to(clientRoomName).emit('ride.accepted', {
-        rideId,
-        driverId,
-        driverName,
-      });
-    } catch (error) {
-      this.logger.error(`Erreur handleRideAccepted: ${error.message}`);
-    }
-  }
-
-  // Dans RidesGateway, ajoutez cette méthode :
-
-@SubscribeMessage('ping')
-handlePing(@ConnectedSocket() client: Socket) {
-  client.emit('pong');
-  return { success: true };
-}
-
-// ÉCOUTER L'ÉVÉNEMENT ride.started
-@OnEvent('ride.started')
-async handleRideStarted(payload: {
-  rideId: string;
-  clientId: string;
-  driverId: string;
-  destination: string;
-}) {
-  this.logger.log(`Événement ride.started reçu pour ride ${payload.rideId}`);
-
-  try {
-    const ride = await this.prisma.ride.findUnique({
-      where: { id: payload.rideId },
-      include: {
-        client: { include: { user: true } },
-        driver: { include: { user: true } }
-      }
-    });
-
-    if (!ride) {
-      this.logger.error(`Course ${payload.rideId} non trouvée`);
-      return;
-    }
-
-    const clientUserId = ride.client.user.id;
-    const clientRoom = `user:${clientUserId}`;
-
-    this.logger.log(`Émission ride.started vers ${clientRoom}`);
-
-    // NOTIFIER LE CLIENT
-    this.server.to(clientRoom).emit('ride.started', {
-      rideId: payload.rideId,
-      destination: payload.destination,
-      driverName: `${ride.driver?.user.firstName} ${ride.driver?.user.lastName}`,
-      timestamp: new Date(),
-    });
-
-    this.logger.log(`Notification de démarrage envoyée au client`);
-  } catch (error) {
-    this.logger.error(`Erreur handleRideStarted: ${error.message}`);
-  }
-}
   // CORRIGÉ - Émet UNE SEULE FOIS vers client ET chauffeur
   notifyRideCanceled(payload: {
     rideId: string;

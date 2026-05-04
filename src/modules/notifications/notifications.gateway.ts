@@ -128,9 +128,83 @@ export class NotificationsGateway
       this.logger.log(
         ` Socket connecté: socketId=${client.id}, userId=${userId}`,
       );
+
+      // Envoyer les courses en attente si c'est un chauffeur ONLINE
+      await this.sendPendingRidesToDriver(client, userId);
     } catch (err) {
       this.logger.log('Socket auth error', err);
       client.disconnect();
+    }
+  }
+
+  private async sendPendingRidesToDriver(client: Socket, userId: string) {
+    try {
+      const driverProfile = await this.prisma.driverProfile.findUnique({
+        where: { userId },
+        select: {
+          id: true,
+          status: true,
+          activityStatus: true,
+          vehicles: { where: { verified: true, status: 'AVAILABLE' } },
+        },
+      });
+
+      if (
+        !driverProfile ||
+        driverProfile.status !== 'APPROVED' ||
+        driverProfile.activityStatus !== 'ONLINE'
+      ) {
+        return;
+      }
+
+      // Récupérer les courses REQUESTED des 10 dernières minutes
+      const since = new Date(Date.now() - 10 * 60 * 1000);
+      const pendingRides = await this.prisma.ride.findMany({
+        where: {
+          status: 'REQUESTED',
+          driverId: null,
+          createdAt: { gte: since },
+        },
+        include: {
+          client: { include: { user: { select: { id: true, firstName: true, lastName: true, phone: true } } } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      });
+
+      if (pendingRides.length === 0) return;
+
+      this.logger.log(
+        `[REPLAY] Envoi de ${pendingRides.length} course(s) en attente au chauffeur ${userId}`
+      );
+
+      for (const ride of pendingRides) {
+        client.emit('ride.request', {
+          rideId: ride.id,
+          id: ride.id,
+          clientName: `${ride.client.user.firstName} ${ride.client.user.lastName}`,
+          clientPhone: ride.client.user.phone,
+          pickupAddress: ride.pickupAddress,
+          destinationAddress: ride.destinationAddress,
+          pickupLatitude: ride.pickupLatitude,
+          pickupLongitude: ride.pickupLongitude,
+          destinationLatitude: ride.destinationLatitude,
+          destinationLongitude: ride.destinationLongitude,
+          totalFare: ride.totalFare,
+          baseFare: ride.baseFare,
+          amount: ride.totalFare,
+          distanceKm: ride.distanceKm,
+          durationMinutes: ride.durationMinutes ?? 0,
+          passengerCount: ride.passengerCount,
+          rideType: ride.rideType,
+          notes: ride.notes,
+          status: ride.status,
+          requestedAt: ride.requestedAt,
+          timestamp: new Date(),
+        });
+      }
+    } catch (err) {
+      this.logger.warn(`[REPLAY] Erreur sendPendingRidesToDriver: ${err.message}`);
     }
   }
 
@@ -519,6 +593,7 @@ export class NotificationsGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() data: LocationUpdate
   ) {
+    // 1. Réémettre la position en temps réel aux participants de la course
     client.to(`ride-${data.rideId}`).emit('location-updated', {
       rideId: data.rideId,
       latitude: data.latitude,
@@ -527,6 +602,60 @@ export class NotificationsGateway
       speed: data.speed,
       timestamp: new Date(),
     });
+
+    // 2. Persister la position du chauffeur en BDD
+    const userId = this.socketUserMap.get(client.id);
+    if (!userId) return;
+
+    try {
+      const driverProfile = await this.prisma.driverProfile.findUnique({
+        where: { userId },
+      });
+      if (!driverProfile) return;
+
+      // Mettre à jour DriverLocation (upsert)
+      await this.prisma.driverLocation.upsert({
+        where: { driverId: driverProfile.id },
+        update: {
+          latitude: data.latitude,
+          longitude: data.longitude,
+          heading: data.heading ?? null,
+          speed: data.speed ?? null,
+          isOnline: true,
+          lastPing: new Date(),
+        },
+        create: {
+          driverId: driverProfile.id,
+          latitude: data.latitude,
+          longitude: data.longitude,
+          heading: data.heading ?? null,
+          speed: data.speed ?? null,
+          isOnline: true,
+          isAvailable: true,
+        },
+      });
+
+      // Enregistrer un point de tracking si la course est EN COURS
+      if (data.rideId) {
+        const ride = await this.prisma.ride.findUnique({
+          where: { id: data.rideId },
+          select: { status: true },
+        });
+        if (ride?.status === 'IN_PROGRESS') {
+          await this.prisma.rideTrackingPoint.create({
+            data: {
+              rideId: data.rideId,
+              latitude: data.latitude,
+              longitude: data.longitude,
+              heading: data.heading ?? null,
+              speed: data.speed ?? null,
+            },
+          });
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Erreur sauvegarde position GPS: ${error.message}`);
+    }
   }
 
   @SubscribeMessage('ride-status-change')

@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { RidesService } from './rides.service';
 import { RidesController } from './rides.controller';
+import { RidesScheduler } from './rides.scheduler';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { WalletModule } from '../wallet/wallet.module';
@@ -11,8 +12,7 @@ import { WalletModule } from '../wallet/wallet.module';
   imports: [
     PrismaModule,
     NotificationsModule,
-    WalletModule, // ✅ Ajout du WalletModule
-
+    WalletModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
@@ -23,7 +23,7 @@ import { WalletModule } from '../wallet/wallet.module';
     }),
   ],
   controllers: [RidesController],
-  providers: [RidesService],
+  providers: [RidesService, RidesScheduler],
   exports: [RidesService],
 })
 export class RidesModule {}

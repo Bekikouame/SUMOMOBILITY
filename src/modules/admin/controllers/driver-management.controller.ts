@@ -95,12 +95,19 @@ export class DriverManagementController {
 
   @Put(':id/approve')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Approuver un chauffeur' })
+  @ApiOperation({ summary: 'Approuver un chauffeur (vérifie aussi les véhicules et documents)' })
   async approveDriver(
     @Param('id') id: string,
     @Body() dto: ApproveDriverDto,
   ) {
     return this.driverService.approveDriver(id, dto);
+  }
+
+  @Put(':id/verify-vehicle')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Vérifier les véhicules d\'un chauffeur déjà approuvé' })
+  async verifyDriverVehicles(@Param('id') id: string) {
+    return this.driverService.verifyDriverVehicles(id);
   }
 
   @Put(':id/reject')

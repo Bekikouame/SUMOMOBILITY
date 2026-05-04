@@ -94,6 +94,15 @@ export class RidesController {
     return this.ridesService.findRideById(userId, id);
   }
 
+  @Patch(':id/reject')
+  @ApiOperation({ summary: 'Refuser une course (chauffeur)' })
+  @ApiParam({ name: 'id', description: 'ID de la course' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Course refusée' })
+  async rejectRide(@Req() req: any, @Param('id') id: string) {
+    const userId = this.extractUserId(req);
+    return this.ridesService.rejectRide(userId, id);
+  }
+
   @Patch(':id/accept')
   @ApiOperation({ summary: 'Accepter une course (chauffeur)' })
   @ApiParam({ name: 'id', description: 'ID de la course' })

@@ -257,9 +257,13 @@ return {
   }
 
   async searchCarpool(dto: SearchCarpoolDto, userId: string) {
-    const timeBuffer = 30; // +/- 30 minutes
+    const timeBuffer = 60 * 24; // +/- 24 heures (élargi pour les tests)
     const searchTime = new Date(dto.scheduledAt);
-    const radiusKm = dto.radiusKm || 5.0;
+    const radiusKm = dto.radiusKm || 50.0; // Rayon élargi pour les tests
+
+    this.logger.log(`🔍 Recherche covoiturage pour user ${userId}`);
+    this.logger.log(`📍 Position: ${dto.pickupLatitude}, ${dto.pickupLongitude}`);
+    this.logger.log(`🕐 Heure recherche: ${searchTime.toISOString()}`);
 
     // Récupérer le profil client du chercheur
     const clientProfile = await this.prisma.clientProfile.findUnique({
@@ -270,41 +274,54 @@ return {
       throw new Error('Profil client non trouvé');
     }
 
+    // D'abord, récupérer TOUS les covoiturages disponibles pour debug
+    const allCarpools = await this.prisma.reservation.findMany({
+      where: {
+        isSharedRide: true,
+        status: 'CONFIRMED',
+      },
+      include: {
+        client: { include: { user: true } }
+      }
+    });
+    this.logger.log(`📊 Total covoiturages en base: ${allCarpools.length}`);
+    allCarpools.forEach(c => {
+      this.logger.log(`  - ID: ${c.id}, scheduledAt: ${c.scheduledAt}, maxPassengers: ${c.maxSharedPassengers}, current: ${c.currentSharedPassengers}`);
+    });
+
     const availableRides = await this.prisma.reservation.findMany({
       where: {
         isSharedRide: true,
-        currentSharedPassengers: {
-          lt: this.prisma.reservation.fields.maxSharedPassengers
-        },
         status: 'CONFIRMED',
-        // ✅ Exclure les covoiturages créés par le chercheur lui-même
+        // Exclure les covoiturages créés par le chercheur lui-même
         clientId: {
           not: clientProfile.id
+        },
+        // Vérifier qu'il reste des places (comparaison manuelle plus tard)
+        maxSharedPassengers: {
+          gt: 0
         },
         scheduledAt: {
           gte: new Date(searchTime.getTime() - timeBuffer * 60 * 1000),
           lte: new Date(searchTime.getTime() + timeBuffer * 60 * 1000)
         },
-        pickupLatitude: {
-          not: null,
-          gte: dto.pickupLatitude - (radiusKm / 111),
-          lte: dto.pickupLatitude + (radiusKm / 111)
-        },
-        pickupLongitude: {
-          not: null,
-          gte: dto.pickupLongitude - (radiusKm / 111),
-          lte: dto.pickupLongitude + (radiusKm / 111)
-        }
       },
       include: {
         client: { include: { user: true } }
       }
     });
 
+    this.logger.log(`🚗 Covoiturages trouvés après filtre temps: ${availableRides.length}`);
+
+    // Filtrer manuellement ceux qui ont encore des places
+    const ridesWithSeats = availableRides.filter(r => r.currentSharedPassengers < r.maxSharedPassengers);
+    this.logger.log(`🪑 Covoiturages avec places disponibles: ${ridesWithSeats.length}`);
+
     // Calculer compatibilité pour chaque résultat
     const results = await Promise.all(
-      availableRides.map(async (ride) => {
+      ridesWithSeats.map(async (ride) => {
         if (!ride.pickupLatitude || !ride.pickupLongitude) {
+          this.logger.log(`⚠️ Ride ${ride.id} ignoré: pas de coordonnées`);
           return null;
         }
 
@@ -313,6 +330,8 @@ return {
           { lat: dto.pickupLatitude, lng: dto.pickupLongitude },
           { lat: ride.pickupLatitude, lng: ride.pickupLongitude }
         );
+
+        this.logger.log(`📏 Ride ${ride.id}: distance=${distanceToPickup.toFixed(2)}km, additionalTime=${compatibility.additionalTime}min`);
 
         return {
           reservation: ride,
@@ -326,9 +345,13 @@ return {
     );
 
     const compatibleResults = results
-      .filter((r): r is NonNullable<typeof r> => r !== null)
-      .filter(r => r.compatibility.additionalTime <= (dto.maxDetourMinutes || 20))
-      .sort((a, b) => b.compatibility.score - a.compatibility.score);
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+    // Temporairement désactivé le filtre de temps additionnel pour debug
+    // .filter(r => r.compatibility.additionalTime <= (dto.maxDetourMinutes || 20))
+
+    compatibleResults.sort((a, b) => b.compatibility.score - a.compatibility.score);
+
+    this.logger.log(`✅ Résultats finaux: ${compatibleResults.length} covoiturages compatibles`);
 
     return {
       success: true,
@@ -1051,17 +1074,13 @@ async getDriverActiveCarpools(driverId: string) {
     return [];
   }
 
-  // Trouver toutes les réservations de covoiturage créées par le chauffeur OU assignées à lui
+  // Trouver les covoiturages actifs assignés à CE chauffeur
   const reservations = await this.prisma.reservation.findMany({
     where: {
       isSharedRide: true,
-      status: {
-        in: ['CONFIRMED'] // Statuts valides de ReservationStatus
-      },
-      
-        // Covoiturages où il a une ride assignée
-       
-    
+      status: { in: ['PENDING', 'CONFIRMED'] },
+      scheduledAt: { gte: new Date() }, // seulement à venir
+      ride: { driverId },               // assignés à CE chauffeur
     },
     include: {
       ride: true,

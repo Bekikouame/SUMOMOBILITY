@@ -6,13 +6,15 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { AuthService } from '../auth.service';
 import { JwtPayload } from '../interfaces/auth.interface';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TokenBlacklistService } from '../token-blacklist.service';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     private authService: AuthService,
     private configService: ConfigService,
-    private prisma: PrismaService
+    private prisma: PrismaService,
+    private blacklist: TokenBlacklistService,
   ) {
     // Obtenir la clé secrète et vérifier si elle est définie
     const jwtSecret = configService.get<string>('JWT_SECRET');
@@ -52,6 +54,10 @@ async validate(payload: any) {
 
   if (!user || !user.isActive) {
     throw new UnauthorizedException('Utilisateur non trouvé ou inactif');
+  }
+
+  if (!this.blacklist.isTokenValid(userId, payload.iat)) {
+    throw new UnauthorizedException('Token révoqué, veuillez vous reconnecter');
   }
 
   // IMPORTANT : Ce qui est retourné ici devient req.user

@@ -6,6 +6,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { PrismaModule } from '../prisma/prisma.module';
 import { EmailModule } from '../modules/email/email.module';
+import { TokenBlacklistService } from './token-blacklist.service';
 
 @Module({
   imports: [
@@ -16,13 +17,13 @@ import { EmailModule } from '../modules/email/email.module';
       inject: [ConfigService],
       useFactory: async (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: '15d' }, // expire dans 15 minutes
+        signOptions: { expiresIn: '15m' },
       }),
     }),
     EmailModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
-  exports: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, TokenBlacklistService],
+  exports: [AuthService, JwtStrategy, TokenBlacklistService],
 })
 export class AuthModule {}

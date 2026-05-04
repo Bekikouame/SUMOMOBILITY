@@ -43,9 +43,33 @@ export class DashboardController {
     );
   }
 
+  @Get('recent-rides')
+  @ApiOperation({ summary: 'Courses récentes' })
+  getRecentRides(@Query('limit') limit?: string) {
+    return this.dashboardService.getRecentRides(
+      limit ? parseInt(limit) : 10
+    );
+  }
+
   @Get('geographic-stats')
   @ApiOperation({ summary: 'Statistiques par zone géographique' })
   getGeographicStats() {
     return this.dashboardService.getGeographicStats();
+  }
+
+  @Get('rides')
+  @ApiOperation({ summary: 'Liste paginée de toutes les courses' })
+  getAllRides(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.dashboardService.getAllRides(
+      page ? parseInt(page) : 1,
+      limit ? parseInt(limit) : 20,
+      status,
+      search,
+    );
   }
 }
