@@ -11,7 +11,7 @@ export class AutoApprovalService {
     private emailService: EmailService,
   ) {}
 
-  // ✅ MÉTHODE 1 : Approuver + Email
+  // MÉTHODE 1 : Approuver + Email
   async approveDriverWithEmail(driverId: string) {
     const driver = await this.prisma.driverProfile.findUnique({
       where: { id: driverId },
@@ -26,7 +26,7 @@ export class AutoApprovalService {
       throw new ConflictException('Ce chauffeur est déjà approuvé');
     }
 
-    // ✅ Enlever approvedAt
+    //  Enlever approvedAt
     const updatedDriver = await this.prisma.driverProfile.update({
       where: { id: driverId },
       data: { 
@@ -43,7 +43,7 @@ export class AutoApprovalService {
             where: { id: vehicle.id },
             data: { 
               verified: true,
-              verifiedAt: new Date() // ✅ Ce champ existe dans Vehicle
+              verifiedAt: new Date() //  Ce champ existe dans Vehicle
             }
           })
         )
@@ -54,14 +54,14 @@ export class AutoApprovalService {
     let emailSent = false;
     try {
       await this.emailService.sendDriverApprovalEmail(
-        driver.user.email,
+        driver.user.email ?? '',
         driver.user.firstName,
         driver.user.lastName
       );
       emailSent = true;
-      console.log('✅ Email envoyé à:', driver.user.email);
+      console.log('Email envoyé à:', driver.user.email);
     } catch (error) {
-      console.error('⚠️ Erreur envoi email:', error);
+      console.error(' Erreur envoi email:', error);
     }
 
     return {
@@ -70,7 +70,7 @@ export class AutoApprovalService {
     };
   }
 
-  // ✅ MÉTHODE 2 : Rejeter + Email
+  // MÉTHODE 2 : Rejeter + Email
   async rejectDriverWithEmail(driverId: string, reason?: string) {
     const driver = await this.prisma.driverProfile.findUnique({
       where: { id: driverId },
@@ -85,7 +85,7 @@ export class AutoApprovalService {
       throw new ConflictException('Ce chauffeur est déjà rejeté');
     }
 
-    // ✅ Enlever rejectedAt
+    //  Enlever rejectedAt
     const updatedDriver = await this.prisma.driverProfile.update({
       where: { id: driverId },
       data: { 
@@ -97,7 +97,7 @@ export class AutoApprovalService {
     let emailSent = false;
     try {
       await this.emailService.sendDriverRejectionEmail(
-        driver.user.email,
+        driver.user.email ?? '',
         driver.user.firstName,
         driver.user.lastName,
         reason
@@ -199,7 +199,7 @@ async autoApproveAll() {
     let sent = false;
     try {
       await this.emailService.sendDriverApprovalEmail(
-        driver.user.email,
+        driver.user.email ?? '',
         driver.user.firstName,
         driver.user.lastName,
       );
@@ -209,7 +209,7 @@ async autoApproveAll() {
       console.error('Erreur envoi email auto-approve :', error);
     }
 
-    emailResults.push({ email: driver.user.email, sent });
+    emailResults.push({ email: driver.user.email ?? '', sent });
   }
 
   return {

@@ -6,6 +6,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { PrismaModule } from '../prisma/prisma.module';
 import { EmailModule } from '../modules/email/email.module';
+import { SmsModule } from '../modules/sms/sms.module';
 import { TokenBlacklistService } from './token-blacklist.service';
 
 @Module({
@@ -21,6 +22,7 @@ import { TokenBlacklistService } from './token-blacklist.service';
       }),
     }),
     EmailModule,
+    SmsModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, TokenBlacklistService],

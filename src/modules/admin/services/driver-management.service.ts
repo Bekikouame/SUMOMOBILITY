@@ -280,7 +280,7 @@ export class DriverManagementService {
     });
 
     await this.emailService.sendDriverApprovalEmail(
-      driver.user.email,
+      driver.user.email ?? '',
       `${driver.user.firstName} ${driver.user.lastName}`,
       dto.message || 'Félicitations ! Votre compte a été approuvé.',
     );
@@ -328,7 +328,7 @@ export class DriverManagementService {
     });
 
     await this.emailService.sendDriverRejectionEmail(
-      driver.user.email,
+      driver.user.email ?? '',
       `${driver.user.firstName} ${driver.user.lastName}`,
       dto.reason,
     );

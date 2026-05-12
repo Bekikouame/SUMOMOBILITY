@@ -1,16 +1,20 @@
 // src/prisma/prisma.service.ts
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
 
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private readonly prisma: PrismaClient;
-  
+  private readonly pool: Pool;
 
   constructor() {
+    this.pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    const adapter = new PrismaPg(this.pool);
     this.prisma = new PrismaClient({
-      log: ['query', 'info', 'warn', 'error'],
+      adapter,
+      log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
       errorFormat: 'pretty',
     });
   }
@@ -22,8 +26,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy() {
     await this.prisma.$disconnect();
-    
-    console.log(' Base de données déconnectée (Prisma 7 + adapter PG)');
+    await this.pool.end();
+    console.log('✅ Base de données déconnectée (Prisma 7 + adapter PG)');
   }
 
   // === Modèles (garde les tiens comme avant) ===
@@ -77,6 +81,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
   get passwordResetCode() {
     return this.prisma.passwordResetCode;
+  }
+
+  get phoneOtp() {
+    return this.prisma.phoneOtp;
   }
 
   get carpoolRequest() {

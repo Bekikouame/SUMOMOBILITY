@@ -8,28 +8,29 @@ import {
   UseGuards,
   Get,
   UnauthorizedException,
-  BadRequestException,
   ConflictException,
   Req,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import {  RefreshTokenDto } from './dto/refresh-token.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
-import { VerifyAccountDto } from './dto/verify-account.dto';
+import { SendOtpDto } from './dto/send-otp.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { Public } from './decorators/public.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { 
-  ApiTags, 
-  ApiOperation, 
-  ApiResponse, 
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
   ApiBearerAuth,
   ApiBody,
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiUnauthorizedResponse
+  ApiUnauthorizedResponse,
+  ApiTooManyRequestsResponse,
 } from '@nestjs/swagger';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 
@@ -170,7 +171,7 @@ export class AuthController {
         message: 'Connexion réussie',
         data: result
       };
-    } catch (error) {
+    } catch {
       throw new UnauthorizedException('Email ou mot de passe incorrect');
     }
   }
@@ -215,7 +216,7 @@ export class AuthController {
         message: 'Token rafraîchi avec succès',
         data: result
       };
-    } catch (error) {
+    } catch {
       throw new UnauthorizedException('Token de rafraîchissement invalide');
     }
   }
@@ -361,28 +362,78 @@ async resetPassword(@Body() dto: ResetPasswordDto, @Req() req: any) {
 
 
 
+  // ─────────────────────────────────────────────
+  //  AUTHENTIFICATION PAR OTP (sans mot de passe)
+  // ─────────────────────────────────────────────
+
   @Public()
-  @Post('verify-account')
+  @Post('send-otp')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ 
-    summary: 'Vérification de compte',
-    description: 'Vérification du compte utilisateur avec un code (à implémenter plus tard).'
+  @ApiOperation({
+    summary: 'Demander un code OTP par SMS',
+    description: 'Envoie un code à 6 chiffres valable 5 minutes. Limité à 3 demandes par fenêtre de 5 minutes.',
   })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Compte vérifié avec succès',
+  @ApiBody({ type: SendOtpDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Code OTP envoyé',
+    schema: { example: { success: true, message: 'Code OTP envoyé par SMS', expiresIn: 300 } },
+  })
+  @ApiTooManyRequestsResponse({ description: 'Trop de demandes — attendre 5 minutes' })
+  async sendOtp(@Body() dto: SendOtpDto) {
+    const result = await this.authService.sendOtp(dto);
+    return { success: true, ...result };
+  }
+
+  @Public()
+  @Post('resend-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Renvoyer un code OTP',
+    description: 'Invalide le code précédent et en envoie un nouveau. Soumis aux mêmes limites de débit.',
+  })
+  @ApiBody({ type: SendOtpDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Nouveau code OTP envoyé',
+    schema: { example: { success: true, message: 'Code OTP envoyé par SMS', expiresIn: 300 } },
+  })
+  @ApiTooManyRequestsResponse({ description: 'Trop de demandes — attendre 5 minutes' })
+  async resendOtp(@Body() dto: SendOtpDto) {
+    const result = await this.authService.sendOtp(dto);
+    return { success: true, ...result };
+  }
+
+  @Public()
+  @Post('verify-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Vérifier le code OTP et se connecter',
+    description: `Vérifie le code OTP.
+- Si l'utilisateur n'existe pas, le crée avec les informations fournies (firstName et lastName requis).
+- Retourne un token JWT en cas de succès.
+- Limité à 3 tentatives par code.
+- Les chauffeurs sont bloqués si leur compte n'est pas encore validé (status APPROVED).`,
+  })
+  @ApiBody({ type: VerifyOtpDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Authentification réussie',
     schema: {
       example: {
         success: true,
-        message: 'Compte vérifié avec succès'
-      }
-    }
+        message: 'Connexion réussie',
+        data: {
+          user: { id: 'cuid', firstName: 'John', lastName: 'Doe', phone: '+2250123456789', role: 'CLIENT' },
+          tokens: { accessToken: 'eyJ...', refreshToken: 'eyJ...', expiresIn: '30d' },
+        },
+      },
+    },
   })
-  async verifyAccount(@Body() verificationData: { email: string; code: string }) {
-    // la logique de vérification
-    return {
-      success: true,
-      message: 'Compte vérifié avec succès'
-    };
+  @ApiBadRequestResponse({ description: 'Code invalide, expiré ou informations manquantes' })
+  @ApiUnauthorizedResponse({ description: 'Code OTP incorrect' })
+  async verifyOtp(@Body() dto: VerifyOtpDto) {
+    const result = await this.authService.verifyOtp(dto);
+    return { success: true, message: 'Connexion réussie', data: result };
   }
 }

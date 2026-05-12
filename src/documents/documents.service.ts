@@ -161,7 +161,7 @@ return {
 
     // Envoyer notification
     await this.notificationService.sendApprovalNotification(
-      document.driver.user.email,
+      document.driver.user.email ?? '',
       DOCUMENT_TYPE_CONFIG[document.docType].label,
       reviewDto.status === DocumentStatus.APPROVED
     );
@@ -253,7 +253,7 @@ return {
     for (const doc of documents) {
       if (doc.expiresAt) {
         await this.notificationService.sendExpirationWarning(
-          doc.driver.user.email,
+          doc.driver.user.email ?? '',
           DOCUMENT_TYPE_CONFIG[doc.docType].label,
           doc.expiresAt
         );

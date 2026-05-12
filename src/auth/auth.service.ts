@@ -1,10 +1,13 @@
 // src/modules/auth/auth.service.ts
-import { 
-  Injectable, 
-  ConflictException, 
-  UnauthorizedException, 
+import {
+  Injectable,
+  ConflictException,
+  UnauthorizedException,
   NotFoundException,
-  BadRequestException 
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -12,13 +15,22 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto, } from './dto/register.dto';
 import { LoginDto} from './dto/login.dto';
 import { JwtPayload, AuthResponse, TokenPair } from './interfaces/auth.interface';
-import { $Enums, UserRole } from '@prisma/client';
+import { UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { TokenBlacklistService } from './token-blacklist.service';
 import { EmailService } from '../modules/email/email.service';
+import { SmsService } from '../modules/sms/sms.service';
 import {ForgotPasswordDto} from "./dto/forgot-password.dto"
 import {ResetPasswordDto} from "./dto/reset-password.dto"
+import { SendOtpDto } from './dto/send-otp.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
+
+const OTP_RATE_LIMIT = 3;
+const OTP_RATE_WINDOW_MS = 5 * 60 * 1000;
+const OTP_MAX_ATTEMPTS = 3;
+const MAX_USERS = 99;
+const OTP_TTL_MS = 5 * 60 * 1000;  // durée de vie du code
 
 @Injectable()
 export class AuthService {
@@ -27,6 +39,7 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private emailService: EmailService,
+    private smsService: SmsService,
     private blacklist: TokenBlacklistService,
   ) {}
 
@@ -97,7 +110,7 @@ export class AuthService {
     // Générer les tokens
     const tokens = await this.generateTokens({
       sub: user.id,
-      email: user.email,
+      email: user.email ?? null,
       role: user.role,
     });
 
@@ -147,7 +160,7 @@ export class AuthService {
     // Générer les tokens
     const tokens = await this.generateTokens({
       sub: user.id,
-      email: user.email,
+      email: user.email ?? null,
       role: user.role,
     });
 
@@ -185,7 +198,7 @@ export class AuthService {
       // Générer de nouveaux tokens
       return this.generateTokens({
         sub: user.id,
-        email: user.email,
+        email: user.email ?? null,
         role: user.role,
       });
 
@@ -381,14 +394,14 @@ export class AuthService {
     data: {
       userId: user.id,
       code: resetCode,
-      email: user.email,
+      email,          // email vient du DTO (string non-nullable)
       expiresAt: new Date(Date.now() + 15 * 60 * 1000)
     }
   });
 
   // Envoyer email
   const userName = `${user.firstName} ${user.lastName}`;
-  await this.emailService.sendResetCode(user.email, resetCode, userName);
+  await this.emailService.sendResetCode(email, resetCode, userName);
 
   return response;
 }
@@ -454,6 +467,188 @@ async resetPassword(dto: ResetPasswordDto, req: any) {
 
 
 
+
+  // ─────────────────────────────────────────────
+  //  AUTHENTIFICATION PAR OTP (sans mot de passe)
+  // ─────────────────────────────────────────────
+
+  async sendOtp(dto: SendOtpDto): Promise<{ message: string; expiresIn: number }> {
+    const { phone } = dto;
+
+    // Rate limiting : max 3 demandes par fenêtre de 5 minutes
+    const recentCount = await this.prisma.phoneOtp.count({
+      where: {
+        phone,
+        createdAt: { gte: new Date(Date.now() - OTP_RATE_WINDOW_MS) },
+      },
+    });
+
+    if (recentCount >= OTP_RATE_LIMIT) {
+      throw new HttpException(
+        'Trop de demandes. Veuillez patienter 5 minutes avant de réessayer.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    // Invalider les anciens codes non utilisés
+    await this.prisma.phoneOtp.updateMany({
+      where: { phone, used: false },
+      data: { used: true },
+    });
+
+    // Générer un code à 6 chiffres cryptographiquement sûr
+    const code = String(crypto.randomInt(100000, 999999));
+
+    await this.prisma.phoneOtp.create({
+      data: {
+        phone,
+        code,
+        expiresAt: new Date(Date.now() + OTP_TTL_MS),
+      },
+    });
+
+    const message = this.smsService.buildOtpMessage(code);
+    await this.smsService.sendSms(phone, message);
+
+    return { message: 'Code OTP envoyé par SMS', expiresIn: 300 };
+  }
+
+  async verifyOtp(dto: VerifyOtpDto): Promise<AuthResponse> {
+    const { phone, code, role = UserRole.CLIENT, firstName, lastName, country, city, region } = dto;
+
+    // Chercher le code valide le plus récent
+    const otpRecord = await this.prisma.phoneOtp.findFirst({
+      where: {
+        phone,
+        used: false,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!otpRecord) {
+      throw new BadRequestException('Aucun code OTP valide trouvé. Veuillez en demander un nouveau.');
+    }
+
+    // Trop de tentatives → invalider le code
+    if (otpRecord.attempts >= OTP_MAX_ATTEMPTS) {
+      await this.prisma.phoneOtp.update({
+        where: { id: otpRecord.id },
+        data: { used: true },
+      });
+      throw new BadRequestException(
+        'Code OTP invalidé après trop de tentatives. Veuillez en demander un nouveau.',
+      );
+    }
+
+    // Incrémenter les tentatives avant de vérifier
+    await this.prisma.phoneOtp.update({
+      where: { id: otpRecord.id },
+      data: { attempts: otpRecord.attempts + 1 },
+    });
+
+    if (otpRecord.code !== code) {
+      const remaining = OTP_MAX_ATTEMPTS - (otpRecord.attempts + 1);
+      throw new UnauthorizedException(
+        `Code OTP incorrect. ${remaining > 0 ? `${remaining} tentative(s) restante(s).` : 'Code invalidé.'}`,
+      );
+    }
+
+    // Code correct → marquer comme utilisé
+    await this.prisma.phoneOtp.update({
+      where: { id: otpRecord.id },
+      data: { used: true },
+    });
+
+    // Trouver ou créer l'utilisateur
+    let user = await this.prisma.user.findUnique({ where: { phone } });
+
+    if (!user) {
+      const userCount = await this.prisma.user.count();
+      if (userCount >= MAX_USERS) {
+        throw new ForbiddenException(
+          'Les inscriptions sont temporairement fermées. Réessayez plus tard.',
+        );
+      }
+
+      if (!firstName || !lastName) {
+        throw new BadRequestException(
+          'Nouveau compte : firstName et lastName sont requis pour la création du compte.',
+        );
+      }
+
+      user = await this.prisma.$transaction(async (tx) => {
+        const newUser = await tx.user.create({
+          data: {
+            phone,
+            firstName,
+            lastName,
+            role,
+            country,
+            city,
+            region,
+            lastLoginAt: new Date(),
+          },
+        });
+
+        if (role === UserRole.CLIENT) {
+          await tx.clientProfile.create({
+            data: { userId: newUser.id, loyaltyPoints: 0, vipStatus: false },
+          });
+        } else if (role === UserRole.DRIVER) {
+          await tx.driverProfile.create({
+            data: { userId: newUser.id, status: 'PENDING', totalRides: 0, totalEarnings: 0 },
+          });
+        }
+
+        return newUser;
+      });
+    } else {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { lastLoginAt: new Date() },
+      });
+    }
+
+    // Guard TypeScript : user est forcément défini ici
+    if (!user) {
+      throw new BadRequestException('Erreur lors de la création du compte.');
+    }
+
+    // Vérifier que le compte est actif
+    if (!user.isActive) {
+      throw new ForbiddenException('Ce compte a été désactivé. Contactez le support.');
+    }
+
+    // Règle chauffeur : accès uniquement si le compte est validé (status APPROVED)
+    if (user.role === UserRole.DRIVER) {
+      const driverProfile = await this.prisma.driverProfile.findUnique({
+        where: { userId: user.id },
+      });
+
+      if (!driverProfile || driverProfile.status !== 'APPROVED') {
+        const statusMessages: Record<string, string> = {
+          PENDING: 'Votre compte chauffeur est en attente de validation. Vous serez notifié par SMS dès approbation.',
+          SUSPENDED: 'Votre compte chauffeur est suspendu. Contactez le support.',
+          REJECTED: 'Votre candidature chauffeur a été rejetée. Contactez le support.',
+        };
+        const msg = driverProfile
+          ? (statusMessages[driverProfile.status] ?? 'Compte chauffeur non autorisé.')
+          : 'Profil chauffeur introuvable.';
+        throw new ForbiddenException(msg);
+      }
+    }
+
+    const tokens = await this.generateTokens({
+      sub: user.id,
+      email: user.email ?? '',
+      role: user.role,
+    });
+
+    const { passwordHash: _, ...userWithoutPassword } = user;
+
+    return { user: userWithoutPassword, tokens };
+  }
 
   async changePassword(userId: string, oldPassword: string, newPassword: string): Promise<void> {
     const user = await this.prisma.user.findUnique({

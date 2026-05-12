@@ -53,7 +53,7 @@ export class DriversService {
       }
     });
 
-    console.log(`✅ Driver ${userId} changed activity status to ${status}`);
+    console.log(`Driver ${userId} changed activity status to ${status}`);
 
     return {
       message: `Status changed to ${status}`,
@@ -335,11 +335,11 @@ export class DriversService {
       console.log('📧 Envoi de l\'email d\'approbation à:', driver.user.email);
       
       await this.emailService.sendDriverApprovalEmail(
-        driver.user.email,
+        driver.user.email ?? '',
         driver.user.firstName,
         driver.user.lastName
       );
-      
+
       console.log(' Email d\'approbation envoyé avec succès');
     } catch (emailError) {
       console.error(' Erreur lors de l\'envoi de l\'email:', emailError);
@@ -410,7 +410,7 @@ export class DriversService {
       console.log(' Envoi de l\'email de rejet à:', driver.user.email);
       
       await this.emailService.sendDriverRejectionEmail(
-        driver.user.email,
+        driver.user.email ?? '',
         driver.user.firstName,
         driver.user.lastName,
         reason

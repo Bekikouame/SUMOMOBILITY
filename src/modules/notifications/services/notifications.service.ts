@@ -61,7 +61,7 @@ export class NotificationsService implements INotificationService {
           metadata: metadata || {},
           priority: priority || 1,
           scheduleAt,
-          userEmail: user.email,
+          userEmail: user.email ?? '',
           userPhone: user.phone
         });
       }

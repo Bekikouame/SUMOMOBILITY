@@ -23,6 +23,7 @@ import { CarpoolController } from './modules/carpool/carpool.controller';
 import { CarpoolModule } from './modules/carpool/carpool.module';
 import { DriversModule } from './modules/drivers/drivers.module';
 import { PushNotificationsModule } from './modules/push-notifications/push-notifications.module';
+import { FirebaseModule } from './modules/firebase/firebase.module';
 import { WalletModule } from './modules/wallet/wallet.module';
 import { RatingsModule } from './modules/ratings/ratings.module';
 
@@ -53,6 +54,7 @@ import { RatingsModule } from './modules/ratings/ratings.module';
     RideTrackingModule,
     CarpoolModule,
     DriversModule,
+    FirebaseModule,
     PushNotificationsModule,
     WalletModule,
     RatingsModule,
