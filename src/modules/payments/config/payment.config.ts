@@ -6,10 +6,16 @@ export interface PaymentConfig {
     currency: string;
   };
   mobileMoney: {
+    wave: {
+      apiUrl: string;
+      secretKey: string;
+      webhookSecret: string;
+    };
     orangeMoney: {
       apiUrl: string;
       merchantId: string;
       apiKey: string;
+      country: string;
     };
     mtnMoney: {
       apiUrl: string;
@@ -42,10 +48,16 @@ export const defaultPaymentConfig: PaymentConfig = {
     currency: 'xof',
   },
   mobileMoney: {
+    wave: {
+      apiUrl: process.env.WAVE_API_URL || 'https://api.wave.com/v1',
+      secretKey: process.env.WAVE_SECRET_KEY || '',
+      webhookSecret: process.env.WAVE_WEBHOOK_SECRET || '',
+    },
     orangeMoney: {
       apiUrl: process.env.ORANGE_MONEY_API_URL || 'https://api.orange.com/orange-money-webpay',
       merchantId: process.env.ORANGE_MONEY_MERCHANT_ID || '',
       apiKey: process.env.ORANGE_MONEY_API_KEY || '',
+      country: process.env.ORANGE_MONEY_COUNTRY || 'sn', // sn = Sénégal, ci = Côte d'Ivoire
     },
     mtnMoney: {
       apiUrl: process.env.MTN_MONEY_API_URL || 'https://sandbox.momodeveloper.mtn.com',

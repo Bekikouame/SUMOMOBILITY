@@ -25,6 +25,6 @@
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": false,
     "useUnknownInCatchVariables": false,
-    "ignoreDeprecations": "7.0"
+    "ignoreDeprecations": "5.0"
   }
 }

@@ -1,6 +1,7 @@
 // src/modules/auth/auth.service.ts
 import {
   Injectable,
+  Logger,
   ConflictException,
   UnauthorizedException,
   NotFoundException,
@@ -34,6 +35,8 @@ const OTP_TTL_MS = 5 * 60 * 1000;  // durée de vie du code
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
@@ -508,9 +511,18 @@ async resetPassword(dto: ResetPasswordDto, req: any) {
     });
 
     const message = this.smsService.buildOtpMessage(code);
-    await this.smsService.sendSms(phone, message);
+    const smsSent = await this.smsService.sendSms(phone, message);
 
-    return { message: 'Code OTP envoyé par SMS', expiresIn: 300 };
+    if (!smsSent) {
+      this.logger.warn(`SMS non envoyé pour ${phone} — code OTP (dev): ${code}`);
+    }
+
+    const isDev = process.env.NODE_ENV !== 'production';
+    return {
+      message: 'Code OTP envoyé par SMS',
+      expiresIn: 300,
+      ...(isDev && { devCode: code }),
+    };
   }
 
   async verifyOtp(dto: VerifyOtpDto): Promise<AuthResponse> {
@@ -554,12 +566,6 @@ async resetPassword(dto: ResetPasswordDto, req: any) {
       );
     }
 
-    // Code correct → marquer comme utilisé
-    await this.prisma.phoneOtp.update({
-      where: { id: otpRecord.id },
-      data: { used: true },
-    });
-
     // Trouver ou créer l'utilisateur
     let user = await this.prisma.user.findUnique({ where: { phone } });
 
@@ -571,11 +577,18 @@ async resetPassword(dto: ResetPasswordDto, req: any) {
         );
       }
 
+      // Ne pas consommer l'OTP ici : le frontend doit rappeler avec firstName/lastName
       if (!firstName || !lastName) {
         throw new BadRequestException(
           'Nouveau compte : firstName et lastName sont requis pour la création du compte.',
         );
       }
+
+      // Code validé et nom fourni → consommer l'OTP
+      await this.prisma.phoneOtp.update({
+        where: { id: otpRecord.id },
+        data: { used: true },
+      });
 
       user = await this.prisma.$transaction(async (tx) => {
         const newUser = await tx.user.create({
@@ -604,6 +617,12 @@ async resetPassword(dto: ResetPasswordDto, req: any) {
         return newUser;
       });
     } else {
+      // Compte existant → consommer l'OTP maintenant
+      await this.prisma.phoneOtp.update({
+        where: { id: otpRecord.id },
+        data: { used: true },
+      });
+
       await this.prisma.user.update({
         where: { id: user.id },
         data: { lastLoginAt: new Date() },

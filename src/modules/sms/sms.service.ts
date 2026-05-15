@@ -50,7 +50,6 @@ export class SmsService {
 
   async sendSms(to: string, message: string): Promise<boolean> {
     const senderAddress = this.configService.get<string>('ORANGE_SMS_SENDER_ADDRESS');
-    const senderName = this.configService.get<string>('ORANGE_SMS_SENDER_NAME', 'SumoMobility');
 
     try {
       const token = await this.getAccessToken();
@@ -72,7 +71,6 @@ export class SmsService {
             outboundSMSMessageRequest: {
               address:       `tel:${to}`,
               senderAddress: senderUri,
-              senderName,
               outboundSMSTextMessage: { message },
             },
           }),
