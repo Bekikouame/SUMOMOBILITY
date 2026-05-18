@@ -1,15 +1,20 @@
 // src/modules/drivers/drivers.service.ts
 
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { PrismaClient } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
-import { DriverActivityStatus } from 'generated/prisma/wasm';
+import { DriverActivityStatus } from '@prisma/client';
+
+type PrismaTx = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
 
 @Injectable()
 export class DriversService {
+  private readonly logger = new Logger(DriversService.name);
+
   constructor(
-    private prisma: PrismaService,
-    private emailService: EmailService,
+    private readonly prisma: PrismaService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -18,7 +23,12 @@ export class DriversService {
   async updateDriverActivityStatus(userId: string, status: DriverActivityStatus) {
     const driverProfile = await this.prisma.driverProfile.findUnique({
       where: { userId },
-      select: { id: true, status: true, activityStatus: true },
+      select: {
+        id: true,
+        status: true,
+        activityStatus: true,
+        vehicles: { where: { verified: true, status: 'AVAILABLE' }, select: { id: true } },
+      },
     });
 
     if (!driverProfile) {
@@ -27,7 +37,12 @@ export class DriversService {
 
     // Vérifier que le chauffeur est approuvé
     if (driverProfile.status !== 'APPROVED') {
-      throw new BadRequestException('Seuls les chauffeurs approuvés peuvent changer leur statut');
+      throw new BadRequestException('Votre profil n\'est pas encore approuvé. Contactez le support.');
+    }
+
+    // Vérifier qu'un véhicule vérifié et disponible existe (uniquement pour passer en ligne)
+    if (status === DriverActivityStatus.ONLINE && driverProfile.vehicles.length === 0) {
+      throw new BadRequestException('Aucun véhicule vérifié et disponible. Ajoutez un véhicule ou contactez le support.');
     }
 
     const updated = await this.prisma.driverProfile.update({
@@ -53,7 +68,7 @@ export class DriversService {
       }
     });
 
-    console.log(`Driver ${userId} changed activity status to ${status}`);
+    this.logger.log(`Driver ${userId} changed activity status to ${status}`);
 
     return {
       message: `Status changed to ${status}`,
@@ -81,7 +96,7 @@ export class DriversService {
       },
     });
 
-    if (!user || !user.driverProfile) {
+    if (!user?.driverProfile) {
       throw new NotFoundException('Profil chauffeur non trouvé');
     }
 
@@ -104,7 +119,7 @@ export class DriversService {
       select: { id: true, status: true, activityStatus: true },
     });
 
-    if (!driverProfile || driverProfile.status !== 'APPROVED' || driverProfile.activityStatus !== 'ONLINE') {
+    if (driverProfile?.status !== 'APPROVED' || driverProfile?.activityStatus !== 'ONLINE') {
       return { rides: [], count: 0 };
     }
 
@@ -280,7 +295,7 @@ export class DriversService {
    * Approuver un chauffeur
    */
   async approveDriver(driverId: string, adminId: string, message?: string) {
-    console.log('🔍 Recherche du chauffeur:', driverId);
+    this.logger.log('🔍 Recherche du chauffeur:', driverId);
 
     const driver = await this.prisma.driverProfile.findUnique({
       where: { id: driverId },
@@ -293,7 +308,7 @@ export class DriversService {
       throw new NotFoundException('Chauffeur introuvable');
     }
 
-    console.log('✅ Chauffeur trouvé:', driver.user.email);
+    this.logger.log('✅ Chauffeur trouvé:', driver.user.email);
 
     if (driver.status === 'APPROVED') {
       throw new BadRequestException('Ce chauffeur est déjà approuvé');
@@ -301,7 +316,7 @@ export class DriversService {
 
     const oldStatus = driver.status;
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: PrismaTx) => {
       await tx.driverProfile.update({
         where: { id: driverId },
         data: {
@@ -329,10 +344,10 @@ export class DriversService {
       });
     });
 
-    console.log('✅ Statut mis à jour en base de données');
+    this.logger.log('✅ Statut mis à jour en base de données');
 
     try {
-      console.log('📧 Envoi de l\'email d\'approbation à:', driver.user.email);
+      this.logger.log('📧 Envoi de l\'email d\'approbation à:', driver.user.email);
       
       await this.emailService.sendDriverApprovalEmail(
         driver.user.email ?? '',
@@ -340,9 +355,9 @@ export class DriversService {
         driver.user.lastName
       );
 
-      console.log(' Email d\'approbation envoyé avec succès');
+      this.logger.log(' Email d\'approbation envoyé avec succès');
     } catch (emailError) {
-      console.error(' Erreur lors de l\'envoi de l\'email:', emailError);
+      this.logger.error(' Erreur lors de l\'envoi de l\'email:', emailError);
     }
 
     return {
@@ -355,7 +370,7 @@ export class DriversService {
    * Rejeter un chauffeur
    */
   async rejectDriver(driverId: string, adminId: string, reason?: string) {
-    console.log('🔍 Recherche du chauffeur pour rejet:', driverId);
+    this.logger.log('🔍 Recherche du chauffeur pour rejet:', driverId);
 
     const driver = await this.prisma.driverProfile.findUnique({
       where: { id: driverId },
@@ -368,7 +383,7 @@ export class DriversService {
       throw new NotFoundException('Chauffeur introuvable');
     }
 
-    console.log('✅ Chauffeur trouvé:', driver.user.email);
+    this.logger.log('✅ Chauffeur trouvé:', driver.user.email);
 
     if (driver.status === 'REJECTED') {
       throw new BadRequestException('Ce chauffeur est déjà rejeté');
@@ -376,7 +391,7 @@ export class DriversService {
 
     const oldStatus = driver.status;
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: PrismaTx) => {
       await tx.driverProfile.update({
         where: { id: driverId },
         data: {
@@ -404,10 +419,10 @@ export class DriversService {
       });
     });
 
-    console.log(' Statut mis à jour en base de données');
+    this.logger.log(' Statut mis à jour en base de données');
 
     try {
-      console.log(' Envoi de l\'email de rejet à:', driver.user.email);
+      this.logger.log(' Envoi de l\'email de rejet à:', driver.user.email);
       
       await this.emailService.sendDriverRejectionEmail(
         driver.user.email ?? '',
@@ -416,9 +431,9 @@ export class DriversService {
         reason
       );
       
-      console.log(' Email de rejet envoyé avec succès');
+      this.logger.log(' Email de rejet envoyé avec succès');
     } catch (emailError) {
-      console.error(' Erreur lors de l\'envoi de l\'email:', emailError);
+      this.logger.error(' Erreur lors de l\'envoi de l\'email:', emailError);
     }
 
     return {
@@ -464,7 +479,7 @@ export class DriversService {
       throw new NotFoundException('Chauffeur introuvable');
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: PrismaTx) => {
       await tx.user.delete({
         where: { id: driver.userId },
       });
