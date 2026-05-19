@@ -639,23 +639,19 @@ async resetPassword(dto: ResetPasswordDto, req: any) {
       throw new ForbiddenException('Ce compte a été désactivé. Contactez le support.');
     }
 
-    // Règle chauffeur : accès uniquement si le compte est validé (status APPROVED)
+    // Règle chauffeur : bloquer uniquement les comptes suspendus ou rejetés
     if (user.role === UserRole.DRIVER) {
       const driverProfile = await this.prisma.driverProfile.findUnique({
         where: { userId: user.id },
       });
 
-      if (!driverProfile || driverProfile.status !== 'APPROVED') {
-        const statusMessages: Record<string, string> = {
-          PENDING: 'Votre compte chauffeur est en attente de validation. Vous serez notifié par SMS dès approbation.',
-          SUSPENDED: 'Votre compte chauffeur est suspendu. Contactez le support.',
-          REJECTED: 'Votre candidature chauffeur a été rejetée. Contactez le support.',
-        };
-        const msg = driverProfile
-          ? (statusMessages[driverProfile.status] ?? 'Compte chauffeur non autorisé.')
-          : 'Profil chauffeur introuvable.';
-        throw new ForbiddenException(msg);
+      if (driverProfile?.status === 'SUSPENDED') {
+        throw new ForbiddenException('Votre compte chauffeur est suspendu. Contactez le support.');
       }
+      if (driverProfile?.status === 'REJECTED') {
+        throw new ForbiddenException('Votre candidature chauffeur a été rejetée. Contactez le support.');
+      }
+      // PENDING → autorisé à se connecter pour compléter l'onboarding
     }
 
     const tokens = await this.generateTokens({
