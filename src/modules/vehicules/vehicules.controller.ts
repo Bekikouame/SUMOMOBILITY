@@ -32,10 +32,10 @@ export class VehiclesController {
 
 // ✅ AJOUTER AVANT @Post() (important pour l'ordre)
 @Post('onboarding')
-@ApiOperation({ summary: 'Créer véhicule lors inscription (sans auth)' })
+@ApiOperation({ summary: 'Créer véhicule lors inscription chauffeur' })
 @ApiResponse({ status: 201, description: 'Véhicule créé' })
-async createForOnboarding(@Body() dto: CreateVehicleOnboardingDto) {
-  return this.vehiclesService.createForOnboarding(dto);
+async createForOnboarding(@Body() dto: CreateVehicleOnboardingDto, @Req() req: any) {
+  return this.vehiclesService.createForOnboarding(dto, req.user.id);
 }
 
   @Post()

@@ -1,14 +1,9 @@
 // src/vehicles/dto/create-vehicle-onboarding.dto.ts
 
-import { IsString, IsNotEmpty, IsInt, Min, IsOptional, IsEmail } from 'class-validator';
+import { IsString, IsNotEmpty, IsInt, Min, IsOptional } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateVehicleOnboardingDto {
-  @ApiProperty({ example: 'driver@example.com' })
-  @IsEmail()
-  @IsNotEmpty()
-  email: string;
-
   @ApiProperty({ example: 'CI-23-2005' })
   @IsString()
   @IsNotEmpty()

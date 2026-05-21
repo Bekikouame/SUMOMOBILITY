@@ -279,10 +279,10 @@ export class VehiclesService {
   // src/vehicles/vehicles.service.ts
 
 // ✅ AJOUTE CETTE MÉTHODE
-async createForOnboarding(dto: CreateVehicleOnboardingDto) {
-  // 1. Trouver le user par email
+async createForOnboarding(dto: CreateVehicleOnboardingDto, userId: string) {
+  // 1. Trouver le user par son ID (depuis le token JWT)
   const user = await this.prisma.user.findUnique({
-    where: { email: dto.email }
+    where: { id: userId }
   });
 
   if (!user) {
