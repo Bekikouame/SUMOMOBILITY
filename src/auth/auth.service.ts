@@ -517,11 +517,11 @@ async resetPassword(dto: ResetPasswordDto, req: any) {
       this.logger.warn(`SMS non envoyé pour ${phone} — code OTP (dev): ${code}`);
     }
 
-    const isDev = process.env.NODE_ENV !== 'production';
+    const showOtp = process.env.NODE_ENV !== 'production' || process.env.SHOW_OTP_IN_APP === 'true';
     return {
       message: 'Code OTP envoyé par SMS',
       expiresIn: 300,
-      ...(isDev && { devCode: code }),
+      ...(showOtp && { devCode: code }),
     };
   }
 
